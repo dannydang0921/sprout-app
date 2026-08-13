@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sprout — campus connections</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="phone">
+  <header class="top">
+    <div class="logo"><span class="dot"></span>sprout</div>
+    <select id="userSwitcher" title="Switch logged-in user (stand-in for auth)"></select>
+  </header>
+  <div class="screen" id="screen"></div>
+  <nav class="bottom">
+    <button data-tab="discover" class="active"><span class="icon">◎</span>Discover</button>
+    <button data-tab="matches"><span class="icon">✦</span>Matches</button>
+    <button data-tab="messages" style="position:relative;"><span class="icon">✉</span>Messages<span id="unreadBadge" class="badge" style="display:none;"></span></button>
+    <button data-tab="feed"><span class="icon">▤</span>Feed</button>
+    <button data-tab="profile"><span class="icon">☺</span>Profile</button>
+  </nav>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

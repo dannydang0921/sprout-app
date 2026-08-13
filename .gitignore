@@ -1,0 +1,8 @@
+node_modules/
+server/sprout.db
+server/sprout.db-journal
+server/sprout.db-wal
+server/sprout.db-shm
+public/uploads/*
+!public/uploads/.gitkeep
+.env

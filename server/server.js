@@ -37,6 +37,15 @@ function pairKey(a, b) {
   return a < b ? [a, b] : [b, a];
 }
 
+function parseId(value) {
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function userExists(id) {
+  return Boolean(db.prepare('SELECT 1 FROM users WHERE id = ?').get(id));
+}
+
 // --- Users (stand-in for auth: pick "who am I" from a list) ---
 app.get('/api/users', (req, res) => {
   const users = db.prepare('SELECT id, name, role, department, avatar_url FROM users').all();
@@ -45,31 +54,37 @@ app.get('/api/users', (req, res) => {
 
 // --- Full profile (for the edit-your-own-profile screen) ---
 app.get('/api/profile/:id', (req, res) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  const id = parseId(req.params.id);
+  const user = id && db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: 'not found' });
   res.json(user);
 });
 
 app.put('/api/profile/:id', (req, res) => {
+  const id = parseId(req.params.id);
+  if (!id || !userExists(id)) return res.status(404).json({ error: 'not found' });
   const { headline, bio, department, tags, availability } = req.body;
   db.prepare(`
     UPDATE users SET headline = ?, bio = ?, department = ?, tags = ?, availability = ?
     WHERE id = ?
-  `).run(headline || '', bio || '', department || '', tags || '', availability || '', req.params.id);
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  `).run(headline || '', bio || '', department || '', tags || '', availability || '', id);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   res.json(user);
 });
 
 app.post('/api/profile/:userId/photo', upload.single('photo'), (req, res) => {
+  const userId = parseId(req.params.userId);
+  if (!userId || !userExists(userId)) return res.status(404).json({ error: 'not found' });
   if (!req.file) return res.status(400).json({ error: 'no file uploaded' });
   const avatarUrl = `/uploads/${req.file.filename}`;
-  db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(avatarUrl, req.params.userId);
+  db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(avatarUrl, userId);
   res.json({ avatar_url: avatarUrl });
 });
 
 // --- Discover: candidates the given user hasn't swiped on yet ---
 app.get('/api/discover/:userId', (req, res) => {
-  const userId = Number(req.params.userId);
+  const userId = parseId(req.params.userId);
+  if (!userId || !userExists(userId)) return res.status(404).json({ error: 'not found' });
   const candidates = db.prepare(`
     SELECT * FROM users
     WHERE id != ?
@@ -80,8 +95,12 @@ app.get('/api/discover/:userId', (req, res) => {
 
 // --- Swipe: like or pass. Creates a match if the other person already liked you. ---
 app.post('/api/swipe', (req, res) => {
-  const { swiperId, targetId, liked } = req.body;
-  if (!swiperId || !targetId) return res.status(400).json({ error: 'swiperId and targetId required' });
+  const swiperId = parseId(req.body.swiperId);
+  const targetId = parseId(req.body.targetId);
+  if (!swiperId || !targetId) return res.status(400).json({ error: 'valid swiperId and targetId required' });
+  if (swiperId === targetId) return res.status(400).json({ error: 'cannot swipe on yourself' });
+  if (!userExists(swiperId) || !userExists(targetId)) return res.status(404).json({ error: 'user not found' });
+  const liked = req.body.liked === true;
 
   db.prepare(`
     INSERT INTO swipes (swiper_id, target_id, liked) VALUES (?, ?, ?)
@@ -107,7 +126,8 @@ app.post('/api/swipe', (req, res) => {
 
 // --- Matches for a user ---
 app.get('/api/matches/:userId', (req, res) => {
-  const userId = Number(req.params.userId);
+  const userId = parseId(req.params.userId);
+  if (!userId || !userExists(userId)) return res.status(404).json({ error: 'not found' });
   const rows = db.prepare(`
     SELECT u.* FROM matches m
     JOIN users u ON u.id = (CASE WHEN m.user_a = ? THEN m.user_b ELSE m.user_a END)
@@ -118,8 +138,13 @@ app.get('/api/matches/:userId', (req, res) => {
 
 // --- Messages between two users (polling-friendly: pass ?after=<id> to get only new ones) ---
 app.get('/api/messages/:userId/:otherId', (req, res) => {
-  const { userId, otherId } = req.params;
+  const userId = parseId(req.params.userId);
+  const otherId = parseId(req.params.otherId);
   const after = Number(req.query.after || 0);
+  if (!userId || !otherId || !Number.isInteger(after) || after < 0) {
+    return res.status(400).json({ error: 'valid user ids and after are required' });
+  }
+  if (!userExists(userId) || !userExists(otherId)) return res.status(404).json({ error: 'user not found' });
   const rows = db.prepare(`
     SELECT * FROM messages
     WHERE id > ?
@@ -130,8 +155,12 @@ app.get('/api/messages/:userId/:otherId', (req, res) => {
 });
 
 app.post('/api/messages', (req, res) => {
-  const { senderId, receiverId, text } = req.body;
-  if (!senderId || !receiverId || !text) return res.status(400).json({ error: 'missing fields' });
+  const senderId = parseId(req.body.senderId);
+  const receiverId = parseId(req.body.receiverId);
+  const text = typeof req.body.text === 'string' ? req.body.text.trim() : '';
+  if (!senderId || !receiverId || !text) return res.status(400).json({ error: 'valid senderId, receiverId, and text required' });
+  if (senderId === receiverId) return res.status(400).json({ error: 'cannot message yourself' });
+  if (!userExists(senderId) || !userExists(receiverId)) return res.status(404).json({ error: 'user not found' });
   const result = db.prepare(
     'INSERT INTO messages (sender_id, receiver_id, text) VALUES (?, ?, ?)'
   ).run(senderId, receiverId, text);
@@ -141,7 +170,8 @@ app.post('/api/messages', (req, res) => {
 
 // Unread count per user, useful for a notification badge
 app.get('/api/notifications/:userId', (req, res) => {
-  const userId = Number(req.params.userId);
+  const userId = parseId(req.params.userId);
+  if (!userId || !userExists(userId)) return res.status(404).json({ error: 'not found' });
   const unread = db.prepare(
     'SELECT COUNT(*) AS c FROM messages WHERE receiver_id = ? AND read = 0'
   ).get(userId).c;
@@ -149,7 +179,10 @@ app.get('/api/notifications/:userId', (req, res) => {
 });
 
 app.post('/api/messages/read', (req, res) => {
-  const { userId, otherId } = req.body;
+  const userId = parseId(req.body.userId);
+  const otherId = parseId(req.body.otherId);
+  if (!userId || !otherId) return res.status(400).json({ error: 'valid user ids required' });
+  if (!userExists(userId) || !userExists(otherId)) return res.status(404).json({ error: 'user not found' });
   db.prepare(
     'UPDATE messages SET read = 1 WHERE receiver_id = ? AND sender_id = ?'
   ).run(userId, otherId);
@@ -169,15 +202,22 @@ app.get('/api/posts', (req, res) => {
 });
 
 app.post('/api/posts', (req, res) => {
-  const { authorId, text } = req.body;
-  if (!authorId || !text) return res.status(400).json({ error: 'missing fields' });
+  const authorId = parseId(req.body.authorId);
+  const text = typeof req.body.text === 'string' ? req.body.text.trim() : '';
+  if (!authorId || !text) return res.status(400).json({ error: 'valid authorId and text required' });
+  if (!userExists(authorId)) return res.status(404).json({ error: 'user not found' });
   const result = db.prepare('INSERT INTO posts (author_id, text) VALUES (?, ?)').run(authorId, text);
   res.json({ id: result.lastInsertRowid });
 });
 
 app.post('/api/posts/:id/like', (req, res) => {
-  const postId = Number(req.params.id);
-  const { userId } = req.body;
+  const postId = parseId(req.params.id);
+  const userId = parseId(req.body.userId);
+  if (!postId || !userId) return res.status(400).json({ error: 'valid post id and userId required' });
+  if (!userExists(userId)) return res.status(404).json({ error: 'user not found' });
+  if (!db.prepare('SELECT 1 FROM posts WHERE id = ?').get(postId)) {
+    return res.status(404).json({ error: 'post not found' });
+  }
   const existing = db.prepare('SELECT 1 FROM post_likes WHERE post_id = ? AND user_id = ?').get(postId, userId);
   if (existing) {
     db.prepare('DELETE FROM post_likes WHERE post_id = ? AND user_id = ?').run(postId, userId);

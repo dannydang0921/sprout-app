@@ -3,13 +3,16 @@ const colors = ['#2F6E4F','#D9A441','#0C447C','#993C1D','#534AB7','#0F6E56'];
 const colorFor = id => colors[id % colors.length];
 const initials = n => n.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
 const roleLabel = r => r==='peer' ? 'Peer student' : r[0].toUpperCase()+r.slice(1);
+const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
+  '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+}[char]));
 
 // Renders either a real uploaded photo or a colored initials circle as a fallback.
 function avatarHtml(user, extraStyle=''){
   if (user.avatar_url){
-    return `<img class="avatar" style="object-fit:cover;${extraStyle}" src="${user.avatar_url}" alt="${user.name}">`;
+    return `<img class="avatar" style="object-fit:cover;${extraStyle}" src="${escapeHtml(user.avatar_url)}" alt="${escapeHtml(user.name)}">`;
   }
-  return `<div class="avatar" style="background:${colorFor(user.id)};${extraStyle}">${initials(user.name)}</div>`;
+  return `<div class="avatar" style="background:${colorFor(user.id)};${extraStyle}">${escapeHtml(initials(user.name))}</div>`;
 }
 
 let currentUserId = null;
@@ -20,6 +23,7 @@ let activeTab = 'discover';
 let openThreadWith = null;
 let lastMsgId = 0;
 let pollTimer = null;
+let threadRequestToken = 0;
 
 async function api(path, opts) {
   const res = await fetch(API + path, opts && {
@@ -33,12 +37,13 @@ async function api(path, opts) {
 async function init(){
   users = await api('/users');
   const switcher = document.getElementById('userSwitcher');
-  switcher.innerHTML = users.map(u => `<option value="${u.id}">${u.name}</option>`).join('');
+  switcher.innerHTML = users.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
   currentUserId = users[users.length-1].id; // default to the seeded "You" account
   switcher.value = currentUserId;
   switcher.addEventListener('change', () => {
     currentUserId = Number(switcher.value);
     openThreadWith = null;
+    threadRequestToken++;
     loadForCurrentUser();
   });
 
@@ -93,19 +98,19 @@ function discoverView(){
   const p = discoverQueue[discoverQueue.length-1];
   const tags = (p.tags||'').split(',').filter(Boolean);
   const photoInner = p.avatar_url
-    ? `<img src="${p.avatar_url}" alt="${p.name}" style="width:100%;height:100%;object-fit:cover;">`
-    : initials(p.name);
+    ? `<img src="${escapeHtml(p.avatar_url)}" alt="${escapeHtml(p.name)}" style="width:100%;height:100%;object-fit:cover;">`
+    : escapeHtml(initials(p.name));
   return `
     <div class="stack">
       <div class="swipecard">
         <div class="photo" style="background:${colorFor(p.id)}">${photoInner}</div>
         <div class="body">
-          <h3>${p.name}</h3>
-          <span class="roletag ${p.role}">${roleLabel(p.role)}</span>
-          ${p.headline ? `<p style="margin:0 0 8px;font-size:12.5px;color:var(--ivy-dark);font-weight:600;">${p.headline}</p>` : ''}
-          <p class="bio">${p.department} — ${p.bio}</p>
-          ${p.availability ? `<p style="margin:0 0 8px;font-size:12px;color:var(--muted);">🕐 ${p.availability}</p>` : ''}
-          <div class="tagrow">${tags.map(t=>`<span>${t}</span>`).join('')}</div>
+          <h3>${escapeHtml(p.name)}</h3>
+          <span class="roletag ${escapeHtml(p.role)}">${escapeHtml(roleLabel(p.role))}</span>
+          ${p.headline ? `<p style="margin:0 0 8px;font-size:12.5px;color:var(--ivy-dark);font-weight:600;">${escapeHtml(p.headline)}</p>` : ''}
+          <p class="bio">${escapeHtml(p.department)} — ${escapeHtml(p.bio)}</p>
+          ${p.availability ? `<p style="margin:0 0 8px;font-size:12px;color:var(--muted);">🕐 ${escapeHtml(p.availability)}</p>` : ''}
+          <div class="tagrow">${tags.map(t=>`<span>${escapeHtml(t)}</span>`).join('')}</div>
         </div>
       </div>
     </div>
@@ -117,6 +122,7 @@ function discoverView(){
 
 async function swipe(liked){
   const p = discoverQueue.pop();
+  if (!p) return;
   render();
   const { matched } = await api('/swipe', { method:'POST', body:{ swiperId: currentUserId, targetId: p.id, liked } });
   if (matched){
@@ -156,7 +162,7 @@ function matchesView(){
   return `<div class="section-title">Your connections</div>` + matches.map(p => `
     <div class="row" onclick="goToThread(${p.id})">
       ${avatarHtml(p)}
-      <div class="info"><h4>${p.name}</h4><p>${p.headline || p.department}</p></div>
+      <div class="info"><h4>${escapeHtml(p.name)}</h4><p>${escapeHtml(p.headline || p.department)}</p></div>
     </div>`).join('');
 }
 
@@ -165,7 +171,7 @@ function messagesView(){
   return `<div class="section-title">Messages</div>` + matches.map(p => `
     <div class="row" onclick="goToThread(${p.id})">
       ${avatarHtml(p)}
-      <div class="info"><h4>${p.name}</h4><p>Tap to open conversation</p></div>
+      <div class="info"><h4>${escapeHtml(p.name)}</h4><p>Tap to open conversation</p></div>
     </div>`).join('');
 }
 
@@ -176,7 +182,7 @@ function threadShell(id){
       <div class="thread-header">
         <button class="back" onclick="backFromThread()">←</button>
         ${avatarHtml(p, 'width:36px;height:36px;font-size:13px;')}
-        <div><h4 style="margin:0;font-size:14.5px;">${p.name}</h4><p style="margin:0;font-size:12px;color:var(--muted);">${p.headline || p.department}</p></div>
+        <div><h4 style="margin:0;font-size:14.5px;">${escapeHtml(p.name)}</h4><p style="margin:0;font-size:12px;color:var(--muted);">${escapeHtml(p.headline || p.department)}</p></div>
       </div>
       <div class="bubbles" id="bubbles"></div>
       <div class="composer">
@@ -187,15 +193,19 @@ function threadShell(id){
 }
 
 async function loadThread(id){
+  const requestToken = ++threadRequestToken;
   lastMsgId = 0;
   const msgs = await api(`/messages/${currentUserId}/${id}`);
+  if (requestToken !== threadRequestToken || activeTab !== 'messages' || openThreadWith !== id) return;
   renderBubbles(msgs);
   await api('/messages/read', { method:'POST', body:{ userId: currentUserId, otherId: id } });
   refreshUnread();
 }
 
 async function pollThread(id, append){
+  const requestToken = threadRequestToken;
   const msgs = await api(`/messages/${currentUserId}/${id}?after=${lastMsgId}`);
+  if (requestToken !== threadRequestToken || activeTab !== 'messages' || openThreadWith !== id) return;
   if (msgs.length) renderBubbles(msgs, append);
   api('/messages/read', { method:'POST', body:{ userId: currentUserId, otherId: id } });
 }
@@ -214,14 +224,16 @@ function renderBubbles(msgs, append){
   el.scrollTop = el.scrollHeight;
 }
 
-function backFromThread(){ openThreadWith = null; render(); }
+function backFromThread(){ openThreadWith = null; threadRequestToken++; render(); }
 
 async function sendMsg(id){
   const input = document.getElementById('msginput');
   const text = input.value.trim();
   if (!text) return;
+  const requestToken = threadRequestToken;
   input.value = '';
   const msg = await api('/messages', { method:'POST', body:{ senderId: currentUserId, receiverId: id, text } });
+  if (requestToken !== threadRequestToken || activeTab !== 'messages' || openThreadWith !== id) return;
   renderBubbles([msg], true);
 }
 
@@ -238,9 +250,9 @@ async function loadFeed(){
       <div class="post">
         <div class="who">
           ${avatarHtml({id: post.author_id, name: post.author_name, avatar_url: post.author_avatar}, 'width:36px;height:36px;font-size:13px;')}
-          <div><h4>${post.author_name}</h4><span class="roletag ${post.author_role}">${roleLabel(post.author_role)}</span></div>
+          <div><h4>${escapeHtml(post.author_name)}</h4><span class="roletag ${escapeHtml(post.author_role)}">${escapeHtml(roleLabel(post.author_role))}</span></div>
         </div>
-        <p class="content">${post.text}</p>
+        <p class="content">${escapeHtml(post.text)}</p>
         <div class="meta">
           <button onclick="toggleLike(${post.id})">♥ ${post.likes}</button>
         </div>
@@ -277,23 +289,23 @@ async function loadProfile(){
     <div class="composer-box" style="display:flex;flex-direction:column;gap:10px;">
       <div>
         <label style="font-size:11.5px;color:var(--muted);">Headline (short one-liner)</label>
-        <input id="f_headline" value="${p.headline||''}" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;">
+        <input id="f_headline" value="${escapeHtml(p.headline)}" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;">
       </div>
       <div>
         <label style="font-size:11.5px;color:var(--muted);">Department / year</label>
-        <input id="f_department" value="${p.department||''}" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;">
+        <input id="f_department" value="${escapeHtml(p.department)}" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;">
       </div>
       <div>
         <label style="font-size:11.5px;color:var(--muted);">Bio</label>
-        <textarea id="f_bio" style="width:100%;height:70px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;resize:vertical;">${p.bio||''}</textarea>
+        <textarea id="f_bio" style="width:100%;height:70px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;resize:vertical;">${escapeHtml(p.bio)}</textarea>
       </div>
       <div>
         <label style="font-size:11.5px;color:var(--muted);">Tags (comma-separated)</label>
-        <input id="f_tags" value="${p.tags||''}" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;">
+        <input id="f_tags" value="${escapeHtml(p.tags)}" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;">
       </div>
       <div>
         <label style="font-size:11.5px;color:var(--muted);">Availability</label>
-        <input id="f_availability" value="${p.availability||''}" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;">
+        <input id="f_availability" value="${escapeHtml(p.availability)}" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;">
       </div>
       <div class="row2"><button onclick="saveProfile()">Save profile</button></div>
       <p id="saveStatus" style="font-size:12px;color:var(--ivy-dark);margin:0;"></p>

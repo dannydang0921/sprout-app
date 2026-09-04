@@ -18,7 +18,13 @@ CREATE TABLE IF NOT EXISTS users (
   availability TEXT,
   avatar_url TEXT,
   email TEXT,
-  password_hash TEXT
+  password_hash TEXT,
+  academic_year TEXT,
+  email_verified INTEGER NOT NULL DEFAULT 0,
+  verification_token_hash TEXT,
+  verification_expires_at TEXT,
+  password_reset_token_hash TEXT,
+  password_reset_expires_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS swipes (
@@ -71,7 +77,13 @@ const wantedCols = {
   availability: "TEXT",
   avatar_url: "TEXT",
   email: "TEXT",
-  password_hash: "TEXT"
+  password_hash: "TEXT",
+  academic_year: "TEXT",
+  email_verified: "INTEGER NOT NULL DEFAULT 0",
+  verification_token_hash: "TEXT",
+  verification_expires_at: "TEXT",
+  password_reset_token_hash: "TEXT",
+  password_reset_expires_at: "TEXT"
 };
 for (const [col, type] of Object.entries(wantedCols)) {
   if (!existingCols.includes(col)) {
@@ -113,12 +125,27 @@ if (userCount === 0) {
 const accountUsers = db.prepare('SELECT id, email, password_hash FROM users').all();
 const updateEmail = db.prepare('UPDATE users SET email = ? WHERE id = ?');
 const updatePassword = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+const markVerified = db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?');
+const setYear = db.prepare('UPDATE users SET academic_year = ? WHERE id = ?');
 for (const user of accountUsers) {
   if (!user.email || !user.email.trim()) {
     updateEmail.run(`user-${user.id}@sprout.local`, user.id);
   }
   if (!user.password_hash) {
     updatePassword.run(bcrypt.hashSync(`sprout-dev-${user.id}`, 10), user.id);
+  }
+  // Existing seeded accounts use deterministic development emails and remain usable.
+  if (user.id <= 7 && user.email === `user-${user.id}@sprout.local`) markVerified.run(user.id);
+  const existingYear = db.prepare('SELECT academic_year FROM users WHERE id = ?').get(user.id).academic_year;
+  if (!existingYear) {
+    const profile = db.prepare('SELECT department FROM users WHERE id = ?').get(user.id);
+    const match = profile && typeof profile.department === 'string'
+      ? profile.department.match(/^(Freshman|Sophomore|Junior|Senior|Graduate),\s*(.+)$/)
+      : null;
+    if (match) {
+      setYear.run(match[1], user.id);
+      db.prepare('UPDATE users SET department = ? WHERE id = ?').run(match[2], user.id);
+    }
   }
 }
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)');

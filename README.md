@@ -28,7 +28,7 @@ npm install
 npm start
 ```
 
-Then open **http://localhost:3001** in your browser.
+Then open **** in your browser.
 
 The database is seeded automatically on first run with 6 sample profiles
 (2 professors, 2 tutors, 2 peers) plus a "You" account, and 3 starter posts.

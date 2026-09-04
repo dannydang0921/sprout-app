@@ -12,10 +12,10 @@
 <div class="phone">
   <header class="top">
     <div class="logo"><span class="dot"></span>sprout</div>
-    <select id="userSwitcher" title="Switch logged-in user (stand-in for auth)"></select>
+    <button id="logoutButton" class="logout" style="display:none;">Log out</button>
   </header>
   <div class="screen" id="screen"></div>
-  <nav class="bottom">
+  <nav class="bottom" style="display:none;">
     <button data-tab="discover" class="active"><span class="icon">◎</span>Discover</button>
     <button data-tab="matches"><span class="icon">✦</span>Matches</button>
     <button data-tab="messages" style="position:relative;"><span class="icon">✉</span>Messages<span id="unreadBadge" class="badge" style="display:none;"></span></button>

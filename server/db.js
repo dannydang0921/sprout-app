@@ -1,5 +1,6 @@
 const path = require('path');
 const Database = require('better-sqlite3');
+const bcrypt = require('bcrypt');
 
 const dbPath = path.join(__dirname, 'sprout.db');
 const db = new Database(dbPath);
@@ -15,7 +16,9 @@ CREATE TABLE IF NOT EXISTS users (
   bio TEXT,
   tags TEXT,
   availability TEXT,
-  avatar_url TEXT
+  avatar_url TEXT,
+  email TEXT,
+  password_hash TEXT
 );
 
 CREATE TABLE IF NOT EXISTS swipes (
@@ -66,7 +69,9 @@ const existingCols = db.prepare("PRAGMA table_info(users)").all().map(c => c.nam
 const wantedCols = {
   headline: "TEXT",
   availability: "TEXT",
-  avatar_url: "TEXT"
+  avatar_url: "TEXT",
+  email: "TEXT",
+  password_hash: "TEXT"
 };
 for (const [col, type] of Object.entries(wantedCols)) {
   if (!existingCols.includes(col)) {
@@ -102,5 +107,20 @@ if (userCount === 0) {
   db.prepare(`INSERT INTO posts (author_id, text) VALUES (?, ?)`).run(3,
     'Anyone else prepping for the MCAT this fall? Thinking of starting a Sunday study group at the library.');
 }
+
+// Existing databases predate authentication. Give every seeded account a
+// deterministic development login without changing any profile data.
+const accountUsers = db.prepare('SELECT id, email, password_hash FROM users').all();
+const updateEmail = db.prepare('UPDATE users SET email = ? WHERE id = ?');
+const updatePassword = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+for (const user of accountUsers) {
+  if (!user.email || !user.email.trim()) {
+    updateEmail.run(`user-${user.id}@sprout.local`, user.id);
+  }
+  if (!user.password_hash) {
+    updatePassword.run(bcrypt.hashSync(`sprout-dev-${user.id}`, 10), user.id);
+  }
+}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)');
 
 module.exports = db;

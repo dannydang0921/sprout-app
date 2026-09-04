@@ -15,8 +15,8 @@ function avatarHtml(user, extraStyle=''){
   return `<div class="avatar" style="background:${colorFor(user.id)};${extraStyle}">${escapeHtml(initials(user.name))}</div>`;
 }
 
+let currentUser = null;
 let currentUserId = null;
-let users = [];
 let discoverQueue = [];
 let matches = [];
 let activeTab = 'discover';
@@ -26,27 +26,19 @@ let pollTimer = null;
 let threadRequestToken = 0;
 
 async function api(path, opts) {
-  const res = await fetch(API + path, opts && {
+  const request = opts ? {
     ...opts,
-    headers: {'Content-Type':'application/json'},
+    credentials: 'same-origin',
+    headers: {'Content-Type':'application/json', ...(opts.headers || {})},
     body: opts.body ? JSON.stringify(opts.body) : undefined
-  });
-  return res.json();
+  } : { credentials: 'same-origin' };
+  const res = await fetch(API + path, request);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
 }
 
 async function init(){
-  users = await api('/users');
-  const switcher = document.getElementById('userSwitcher');
-  switcher.innerHTML = users.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
-  currentUserId = users[users.length-1].id; // default to the seeded "You" account
-  switcher.value = currentUserId;
-  switcher.addEventListener('change', () => {
-    currentUserId = Number(switcher.value);
-    openThreadWith = null;
-    threadRequestToken++;
-    loadForCurrentUser();
-  });
-
   document.querySelectorAll('nav.bottom button').forEach(b=>{
     b.addEventListener('click', () => {
       activeTab = b.dataset.tab;
@@ -55,20 +47,42 @@ async function init(){
       render();
     });
   });
+  document.getElementById('logoutButton').addEventListener('click', logout);
+  await refreshSession();
+}
 
-  await loadForCurrentUser();
-  startPolling();
+async function refreshSession(){
+  try {
+    currentUser = await api('/auth/me');
+    currentUserId = currentUser.id;
+    document.querySelector('nav.bottom').style.display = 'flex';
+    document.getElementById('logoutButton').style.display = 'inline-block';
+    await loadForCurrentUser();
+    startPolling();
+  } catch (err) {
+    currentUser = null;
+    currentUserId = null;
+    stopPolling();
+    document.querySelector('nav.bottom').style.display = 'none';
+    document.getElementById('logoutButton').style.display = 'none';
+    renderAuth();
+  }
+}
+
+function stopPolling(){
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = null;
 }
 
 async function loadForCurrentUser(){
-  discoverQueue = await api(`/discover/${currentUserId}`);
-  matches = await api(`/matches/${currentUserId}`);
+  discoverQueue = await api('/discover');
+  matches = await api('/matches');
   await refreshUnread();
   render();
 }
 
 async function refreshUnread(){
-  const { unread } = await api(`/notifications/${currentUserId}`);
+  const { unread } = await api('/notifications');
   const badge = document.getElementById('unreadBadge');
   if (unread > 0) { badge.style.display = 'inline-block'; badge.textContent = unread; }
   else badge.style.display = 'none';
@@ -84,11 +98,72 @@ function startPolling(){
 
 function render(){
   const el = document.getElementById('screen');
+  if (!currentUser) return renderAuth();
   if (activeTab==='discover') el.innerHTML = discoverView();
   if (activeTab==='matches') el.innerHTML = matchesView();
   if (activeTab==='messages') { el.innerHTML = openThreadWith ? threadShell(openThreadWith) : messagesView(); if(openThreadWith) loadThread(openThreadWith); }
   if (activeTab==='feed') loadFeed();
   if (activeTab==='profile') loadProfile();
+}
+
+let authMode = 'login';
+function renderAuth(){
+  const el = document.getElementById('screen');
+  const register = authMode === 'register';
+  el.innerHTML = `
+    <div class="auth">
+      <h1>${register ? 'Create your Sprout account' : 'Welcome back'}</h1>
+      <p>${register ? 'Join your campus community and find people to learn with.' : 'Log in to continue building campus connections.'}</p>
+      <form onsubmit="submitAuth(event)">
+        ${register ? `<label>Name<input id="authName" required maxlength="100" autocomplete="name"></label>
+          <label>Role<select id="authRole"><option value="peer">Peer student</option><option value="tutor">Tutor</option><option value="professor">Professor</option></select></label>
+          <label>Department / year<input id="authDepartment" maxlength="120" autocomplete="organization-title"></label>` : ''}
+        <label>Email<input id="authEmail" type="email" required maxlength="254" autocomplete="email"></label>
+        <label>Password<input id="authPassword" type="password" required minlength="8" maxlength="128" autocomplete="${register ? 'new-password' : 'current-password'}"></label>
+        <button type="submit">${register ? 'Create account' : 'Log in'}</button>
+        <div id="authError" class="error"></div>
+      </form>
+      <button class="switch" onclick="toggleAuthMode()">${register ? 'Already have an account? Log in' : 'New to Sprout? Create an account'}</button>
+    </div>`;
+}
+function toggleAuthMode(){
+  authMode = authMode === 'login' ? 'register' : 'login';
+  renderAuth();
+}
+async function submitAuth(event){
+  event.preventDefault();
+  const register = authMode === 'register';
+  const body = {
+    email: document.getElementById('authEmail').value,
+    password: document.getElementById('authPassword').value
+  };
+  if (register) {
+    body.name = document.getElementById('authName').value;
+    body.role = document.getElementById('authRole').value;
+    body.department = document.getElementById('authDepartment').value;
+  }
+  const error = document.getElementById('authError');
+  error.textContent = '';
+  try {
+    currentUser = await api(register ? '/auth/register' : '/auth/login', {method:'POST', body});
+    currentUserId = currentUser.id;
+    await loadForCurrentUser();
+    document.querySelector('nav.bottom').style.display = 'flex';
+    document.getElementById('logoutButton').style.display = 'inline-block';
+    startPolling();
+  } catch (err) {
+    error.textContent = err.message;
+  }
+}
+async function logout(){
+  await api('/auth/logout', {method:'POST'});
+  currentUser = null;
+  currentUserId = null;
+  openThreadWith = null;
+  stopPolling();
+  document.querySelector('nav.bottom').style.display = 'none';
+  document.getElementById('logoutButton').style.display = 'none';
+  renderAuth();
 }
 
 function discoverView(){
@@ -124,9 +199,9 @@ async function swipe(liked){
   const p = discoverQueue.pop();
   if (!p) return;
   render();
-  const { matched } = await api('/swipe', { method:'POST', body:{ swiperId: currentUserId, targetId: p.id, liked } });
+  const { matched } = await api('/swipe', { method:'POST', body:{ targetId: p.id, liked } });
   if (matched){
-    matches = await api(`/matches/${currentUserId}`);
+    matches = await api('/matches');
     showMatchModal(p);
   }
 }
@@ -138,7 +213,7 @@ function showMatchModal(p){
     <div class="matchcard">
       <div class="stamp">It's a connection!</div>
       <div class="avatars">
-        ${avatarHtml(users.find(u=>u.id===currentUserId))}
+        ${avatarHtml(currentUser)}
         ${avatarHtml(p)}
       </div>
       <p>${p.name} accepted your request. Start the conversation whenever you're ready.</p>
@@ -176,7 +251,7 @@ function messagesView(){
 }
 
 function threadShell(id){
-  const p = users.find(u=>u.id===id);
+  const p = matches.find(u=>u.id===id) || discoverQueue.find(u=>u.id===id) || { id, name: 'Connection', headline: '' };
   return `
     <div class="thread">
       <div class="thread-header">
@@ -195,19 +270,19 @@ function threadShell(id){
 async function loadThread(id){
   const requestToken = ++threadRequestToken;
   lastMsgId = 0;
-  const msgs = await api(`/messages/${currentUserId}/${id}`);
+  const msgs = await api(`/messages/${id}`);
   if (requestToken !== threadRequestToken || activeTab !== 'messages' || openThreadWith !== id) return;
   renderBubbles(msgs);
-  await api('/messages/read', { method:'POST', body:{ userId: currentUserId, otherId: id } });
+  await api('/messages/read', { method:'POST', body:{ otherId: id } });
   refreshUnread();
 }
 
 async function pollThread(id, append){
   const requestToken = threadRequestToken;
-  const msgs = await api(`/messages/${currentUserId}/${id}?after=${lastMsgId}`);
+  const msgs = await api(`/messages/${id}?after=${lastMsgId}`);
   if (requestToken !== threadRequestToken || activeTab !== 'messages' || openThreadWith !== id) return;
   if (msgs.length) renderBubbles(msgs, append);
-  api('/messages/read', { method:'POST', body:{ userId: currentUserId, otherId: id } });
+  api('/messages/read', { method:'POST', body:{ otherId: id } });
 }
 
 function renderBubbles(msgs, append){
@@ -232,7 +307,7 @@ async function sendMsg(id){
   if (!text) return;
   const requestToken = threadRequestToken;
   input.value = '';
-  const msg = await api('/messages', { method:'POST', body:{ senderId: currentUserId, receiverId: id, text } });
+  const msg = await api('/messages', { method:'POST', body:{ receiverId: id, text } });
   if (requestToken !== threadRequestToken || activeTab !== 'messages' || openThreadWith !== id) return;
   renderBubbles([msg], true);
 }
@@ -263,16 +338,16 @@ async function addPost(){
   const ta = document.getElementById('newpost');
   const text = ta.value.trim();
   if (!text) return;
-  await api('/posts', { method:'POST', body:{ authorId: currentUserId, text } });
+  await api('/posts', { method:'POST', body:{ text } });
   loadFeed();
 }
 async function toggleLike(id){
-  await api(`/posts/${id}/like`, { method:'POST', body:{ userId: currentUserId } });
+  await api(`/posts/${id}/like`, { method:'POST' });
   loadFeed();
 }
 
 async function loadProfile(){
-  const p = await api(`/profile/${currentUserId}`);
+  const p = await api('/profile');
   const el = document.getElementById('screen');
   el.innerHTML = `
     <div class="section-title">Your profile</div>
@@ -320,12 +395,11 @@ async function loadProfile(){
     const formData = new FormData();
     formData.append('photo', file);
     try {
-      const res = await fetch(`${API}/profile/${currentUserId}/photo`, { method: 'POST', body: formData });
+      const res = await fetch(`${API}/profile/photo`, { method: 'POST', body: formData, credentials: 'same-origin' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Upload failed');
       statusEl.textContent = 'Photo updated!';
-      const idx = users.findIndex(u => u.id === currentUserId);
-      if (idx > -1) users[idx].avatar_url = data.avatar_url;
+      currentUser.avatar_url = data.avatar_url;
       loadProfile();
     } catch (err) {
       statusEl.textContent = err.message;
@@ -341,7 +415,7 @@ async function saveProfile(){
     tags: document.getElementById('f_tags').value.trim(),
     availability: document.getElementById('f_availability').value.trim(),
   };
-  await api(`/profile/${currentUserId}`, { method: 'PUT', body });
+  currentUser = await api('/profile', { method: 'PUT', body });
   document.getElementById('saveStatus').textContent = 'Saved.';
 }
 

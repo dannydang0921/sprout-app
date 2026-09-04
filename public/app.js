@@ -34,7 +34,11 @@ async function api(path, opts) {
   } : { credentials: 'same-origin' };
   const res = await fetch(API + path, request);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Request failed');
+  if (!res.ok) {
+    const error = new Error(data.error || 'Request failed');
+    error.status = res.status;
+    throw error;
+  }
   return data;
 }
 
@@ -48,24 +52,53 @@ async function init(){
     });
   });
   document.getElementById('logoutButton').addEventListener('click', logout);
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('reset')) {
+    authMode = 'reset';
+    resetToken = params.get('reset');
+    renderAuth();
+    return;
+  }
+  if (params.get('verified')) {
+    authNotice = 'Your email is confirmed. You can log in now.';
+    window.history.replaceState({}, '', window.location.pathname);
+  }
   await refreshSession();
 }
 
 async function refreshSession(){
+  let sessionUser;
   try {
-    currentUser = await api('/auth/me');
-    currentUserId = currentUser.id;
-    document.querySelector('nav.bottom').style.display = 'flex';
-    document.getElementById('logoutButton').style.display = 'inline-block';
-    await loadForCurrentUser();
-    startPolling();
+    sessionUser = await api('/auth/me');
   } catch (err) {
+    if (err.status && err.status !== 401) console.error(err);
     currentUser = null;
     currentUserId = null;
     stopPolling();
     document.querySelector('nav.bottom').style.display = 'none';
     document.getElementById('logoutButton').style.display = 'none';
     renderAuth();
+    return;
+  }
+  currentUser = sessionUser;
+  currentUserId = currentUser.id;
+  document.querySelector('nav.bottom').style.display = 'flex';
+  document.getElementById('logoutButton').style.display = 'inline-block';
+  try {
+    await loadForCurrentUser();
+    startPolling();
+  } catch (err) {
+    if (err.status === 401) {
+      currentUser = null;
+      currentUserId = null;
+      stopPolling();
+      document.querySelector('nav.bottom').style.display = 'none';
+      document.getElementById('logoutButton').style.display = 'none';
+      renderAuth();
+    } else {
+      console.error(err);
+      document.getElementById('screen').innerHTML = '<div class="empty"><span class="big">Sprout is taking a moment</span>Please refresh to try again.</div>';
+    }
   }
 }
 
@@ -107,9 +140,51 @@ function render(){
 }
 
 let authMode = 'login';
+let authNotice = '';
+let resetToken = '';
+const departmentOptions = ['Computer Science', 'Biology', 'Economics', 'Mathematics', 'Physics', 'Undeclared', 'Other'];
+const yearOptions = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'Faculty', 'Other'];
+const legacyDepartmentOptions = ['Calculus II & III', 'Intro Physics', 'CS'];
+
+function selectOptions(options, selected, placeholder = 'Select one') {
+  const values = [...new Set(options.concat(selected && !options.includes(selected) ? [selected] : []))];
+  return `<option value="">${placeholder}</option>` + values.map(value =>
+    `<option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(value)}</option>`
+  ).join('');
+}
+
+function passwordField(id, label, autocomplete, confirm = false) {
+  return `<label>${label}<span class="password-wrap"><input id="${id}" type="password" required minlength="8" maxlength="128" autocomplete="${autocomplete}"><button type="button" class="reveal" aria-label="Show password" onclick="togglePassword('${id}', this)">Show</button></span></label>` +
+    (confirm ? `<label>Confirm password<span class="password-wrap"><input id="${id}Confirm" type="password" required minlength="8" maxlength="128" autocomplete="new-password"><button type="button" class="reveal" aria-label="Show password confirmation" onclick="togglePassword('${id}Confirm', this)">Show</button></span></label>` : '');
+}
+
 function renderAuth(){
   const el = document.getElementById('screen');
   const register = authMode === 'register';
+  const forgot = authMode === 'forgot';
+  const reset = authMode === 'reset';
+  if (forgot) {
+    el.innerHTML = `<div class="auth">
+      <h1>Reset your password</h1><p>Enter your email and we’ll provide a secure reset link if an account exists.</p>
+      <form onsubmit="submitForgot(event)">
+        <label>Email<input id="authEmail" type="email" required maxlength="254" autocomplete="email"></label>
+        <button type="submit">Send reset link</button><div id="authError" class="error">${escapeHtml(authNotice)}</div>
+      </form><button class="switch" onclick="switchAuth('login')">Back to log in</button>
+    </div>`;
+    authNotice = '';
+    return;
+  }
+  if (reset) {
+    el.innerHTML = `<div class="auth">
+      <h1>Choose a new password</h1><p>This secure link expires shortly and can only be used once.</p>
+      <form onsubmit="submitReset(event)">
+        ${passwordField('resetPassword', 'New password', 'new-password', true)}
+        <button type="submit">Reset password</button><div id="authError" class="error">${escapeHtml(authNotice)}</div>
+      </form>
+    </div>`;
+    authNotice = '';
+    return;
+  }
   el.innerHTML = `
     <div class="auth">
       <h1>${register ? 'Create your Sprout account' : 'Welcome back'}</h1>
@@ -117,19 +192,30 @@ function renderAuth(){
       <form onsubmit="submitAuth(event)">
         ${register ? `<label>Name<input id="authName" required maxlength="100" autocomplete="name"></label>
           <label>Role<select id="authRole"><option value="peer">Peer student</option><option value="tutor">Tutor</option><option value="professor">Professor</option></select></label>
-          <label>Department / year<input id="authDepartment" maxlength="120" autocomplete="organization-title"></label>` : ''}
+          <label>Department<select id="authDepartment" required>${selectOptions(departmentOptions, '')}</select></label>
+          <label>Academic year<select id="authAcademicYear" required>${selectOptions(yearOptions, '')}</select></label>` : ''}
         <label>Email<input id="authEmail" type="email" required maxlength="254" autocomplete="email"></label>
-        <label>Password<input id="authPassword" type="password" required minlength="8" maxlength="128" autocomplete="${register ? 'new-password' : 'current-password'}"></label>
+        ${passwordField('authPassword', 'Password', register ? 'new-password' : 'current-password', register)}
         <button type="submit">${register ? 'Create account' : 'Log in'}</button>
-        <div id="authError" class="error"></div>
+        <div id="authError" class="error">${escapeHtml(authNotice)}</div>
       </form>
-      <button class="switch" onclick="toggleAuthMode()">${register ? 'Already have an account? Log in' : 'New to Sprout? Create an account'}</button>
+      ${!register ? "<button class=\"switch\" onclick=\"switchAuth('forgot')\">Forgot your password?</button>" : ''}
+      ${!register ? '<button class="switch" onclick="resendVerification()">Resend verification email</button>' : ''}
+      <button class="switch" onclick="switchAuth('${register ? 'login' : 'register'}')">${register ? 'Already have an account? Log in' : 'New to Sprout? Create an account'}</button>
     </div>`;
+  authNotice = '';
 }
-function toggleAuthMode(){
-  authMode = authMode === 'login' ? 'register' : 'login';
+function togglePassword(id, button) {
+  const input = document.getElementById(id);
+  input.type = input.type === 'password' ? 'text' : 'password';
+  button.textContent = input.type === 'password' ? 'Show' : 'Hide';
+  button.setAttribute('aria-label', input.type === 'password' ? 'Show password' : 'Hide password');
+}
+function switchAuth(mode) {
+  authMode = mode;
   renderAuth();
 }
+function toggleAuthMode(){ switchAuth(authMode === 'login' ? 'register' : 'login'); }
 async function submitAuth(event){
   event.preventDefault();
   const register = authMode === 'register';
@@ -141,16 +227,64 @@ async function submitAuth(event){
     body.name = document.getElementById('authName').value;
     body.role = document.getElementById('authRole').value;
     body.department = document.getElementById('authDepartment').value;
+    body.academicYear = document.getElementById('authAcademicYear').value;
+    body.passwordConfirmation = document.getElementById('authPasswordConfirm').value;
   }
   const error = document.getElementById('authError');
   error.textContent = '';
   try {
-    currentUser = await api(register ? '/auth/register' : '/auth/login', {method:'POST', body});
+    const result = await api(register ? '/auth/register' : '/auth/login', {method:'POST', body});
+    if (register) {
+      authNotice = result.message;
+      authMode = 'login';
+      renderAuth();
+      return;
+    }
+    currentUser = result;
     currentUserId = currentUser.id;
-    await loadForCurrentUser();
     document.querySelector('nav.bottom').style.display = 'flex';
     document.getElementById('logoutButton').style.display = 'inline-block';
+    await loadForCurrentUser();
     startPolling();
+  } catch (err) {
+    error.textContent = err.message;
+  }
+}
+async function resendVerification(){
+  const email = document.getElementById('authEmail')?.value || '';
+  const error = document.getElementById('authError');
+  try {
+    const result = await api('/auth/resend-verification', {method:'POST', body:{email}});
+    error.textContent = result.message;
+  } catch (err) {
+    error.textContent = err.message;
+  }
+}
+async function submitForgot(event){
+  event.preventDefault();
+  const error = document.getElementById('authError');
+  try {
+    const result = await api('/auth/forgot-password', {method:'POST', body:{email:document.getElementById('authEmail').value}});
+    error.textContent = result.message;
+  } catch (err) {
+    error.textContent = err.message;
+  }
+}
+async function submitReset(event){
+  event.preventDefault();
+  const error = document.getElementById('authError');
+  const password = document.getElementById('resetPassword').value;
+  const confirmation = document.getElementById('resetPasswordConfirm').value;
+  if (password !== confirmation) {
+    error.textContent = 'Passwords do not match.';
+    return;
+  }
+  try {
+    const result = await api('/auth/reset-password', {method:'POST', body:{token:resetToken, password, passwordConfirmation:confirmation}});
+    authMode = 'login';
+    authNotice = result.message;
+    window.history.replaceState({}, '', window.location.pathname);
+    renderAuth();
   } catch (err) {
     error.textContent = err.message;
   }
@@ -367,8 +501,16 @@ async function loadProfile(){
         <input id="f_headline" value="${escapeHtml(p.headline)}" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;">
       </div>
       <div>
-        <label style="font-size:11.5px;color:var(--muted);">Department / year</label>
-        <input id="f_department" value="${escapeHtml(p.department)}" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;">
+        <label style="font-size:11.5px;color:var(--muted);">Department</label>
+        <select id="f_department" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;">
+          ${selectOptions(departmentOptions.concat(legacyDepartmentOptions), p.department || '')}
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11.5px;color:var(--muted);">Academic year</label>
+        <select id="f_academicYear" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:'Inter';font-size:13.5px;">
+          ${selectOptions(yearOptions, p.academic_year || '')}
+        </select>
       </div>
       <div>
         <label style="font-size:11.5px;color:var(--muted);">Bio</label>
@@ -384,6 +526,10 @@ async function loadProfile(){
       </div>
       <div class="row2"><button onclick="saveProfile()">Save profile</button></div>
       <p id="saveStatus" style="font-size:12px;color:var(--ivy-dark);margin:0;"></p>
+    </div>
+    <div class="danger-zone">
+      <div><strong>Delete account</strong><p>This permanently removes your profile, posts, messages, matches, and likes.</p></div>
+      <button class="danger" onclick="deleteAccount()">Delete account</button>
     </div>
   `;
 
@@ -411,12 +557,32 @@ async function saveProfile(){
   const body = {
     headline: document.getElementById('f_headline').value.trim(),
     department: document.getElementById('f_department').value.trim(),
+    academicYear: document.getElementById('f_academicYear').value,
     bio: document.getElementById('f_bio').value.trim(),
     tags: document.getElementById('f_tags').value.trim(),
     availability: document.getElementById('f_availability').value.trim(),
   };
   currentUser = await api('/profile', { method: 'PUT', body });
   document.getElementById('saveStatus').textContent = 'Saved.';
+}
+
+async function deleteAccount(){
+  if (!window.confirm('Delete your Sprout account permanently? This cannot be undone.')) return;
+  try {
+    await api('/account', { method:'DELETE' });
+    currentUser = null;
+    currentUserId = null;
+    openThreadWith = null;
+    stopPolling();
+    document.querySelector('nav.bottom').style.display = 'none';
+    document.getElementById('logoutButton').style.display = 'none';
+    authNotice = 'Your account has been deleted.';
+    authMode = 'login';
+    renderAuth();
+  } catch (err) {
+    const status = document.getElementById('saveStatus');
+    if (status) status.textContent = err.message;
+  }
 }
 
 init();

@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const session = require('express-session');
@@ -49,6 +50,10 @@ const upload = multer({
 });
 
 const PORT = process.env.PORT || 3001;
+const TOKEN_TTL_MS = 60 * 60 * 1000;
+const DEPARTMENTS = ['Computer Science', 'Biology', 'Economics', 'Mathematics', 'Physics', 'Undeclared', 'Other'];
+const LEGACY_DEPARTMENTS = ['Calculus II & III', 'Intro Physics', 'CS', 'Junior, Biology'];
+const ACADEMIC_YEARS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'Faculty', 'Other'];
 
 function pairKey(a, b) {
   return a < b ? [a, b] : [b, a];
@@ -65,7 +70,8 @@ function userExists(id) {
 
 function publicUser(id) {
   return db.prepare(`
-    SELECT id, name, role, department, headline, bio, tags, availability, avatar_url, email
+    SELECT id, name, role, department, academic_year, headline, bio, tags, availability, avatar_url, email,
+      email_verified
     FROM users WHERE id = ?
   `).get(id);
 }
@@ -101,31 +107,66 @@ function startSession(req, userId) {
   });
 }
 
+function tokenHash(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function createToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function appUrl(req, route, token) {
+  const base = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+  return `${base}${route}?token=${encodeURIComponent(token)}`;
+}
+
+function logDelivery(label, url) {
+  console.log(`[sprout] ${label}: ${url}`);
+}
+
+function validChoice(value, choices) {
+  return typeof value === 'string' && choices.includes(value);
+}
+
+function validProfileChoice(value, choices, legacyChoices = []) {
+  return value === '' || validChoice(value, choices.concat(legacyChoices));
+}
+
 // --- Authentication ---
 app.post(['/api/auth/register', '/api/register'], async (req, res, next) => {
   try {
     const email = normalizedEmail(req.body.email);
     const password = typeof req.body.password === 'string' ? req.body.password : '';
+    const passwordConfirmation = typeof req.body.passwordConfirmation === 'string' ? req.body.passwordConfirmation : '';
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
     const role = typeof req.body.role === 'string' ? req.body.role : 'peer';
     const department = typeof req.body.department === 'string' ? req.body.department.trim() : '';
+    const academicYear = typeof req.body.academicYear === 'string' ? req.body.academicYear.trim() : '';
     if (!validEmail(email)) return res.status(400).json({ error: 'valid email is required' });
     if (password.length < 8 || password.length > 128) {
       return res.status(400).json({ error: 'password must be 8-128 characters' });
     }
+    if (password !== passwordConfirmation) return res.status(400).json({ error: 'passwords do not match' });
     if (!name || name.length > 100) return res.status(400).json({ error: 'name is required (100 characters max)' });
     if (!['professor', 'tutor', 'peer'].includes(role)) return res.status(400).json({ error: 'invalid role' });
-    if (!validText(department, 120)) return res.status(400).json({ error: 'department is too long' });
+    if (!validChoice(department, DEPARTMENTS)) return res.status(400).json({ error: 'select a valid department' });
+    if (!validChoice(academicYear, ACADEMIC_YEARS)) return res.status(400).json({ error: 'select a valid academic year' });
     if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) {
       return res.status(409).json({ error: 'an account with that email already exists' });
     }
     const passwordHash = await bcrypt.hash(password, 12);
+    const verificationToken = createToken();
+    const verificationExpiresAt = new Date(Date.now() + TOKEN_TTL_MS).toISOString();
     const result = db.prepare(`
-      INSERT INTO users (name, role, department, headline, bio, tags, availability, avatar_url, email, password_hash)
-      VALUES (?, ?, ?, '', '', '', '', NULL, ?, ?)
-    `).run(name, role, department, email, passwordHash);
-    await startSession(req, result.lastInsertRowid);
-    res.status(201).json(publicUser(result.lastInsertRowid));
+      INSERT INTO users (name, role, department, academic_year, headline, bio, tags, availability, avatar_url, email, password_hash,
+        email_verified, verification_token_hash, verification_expires_at)
+      VALUES (?, ?, ?, ?, '', '', '', '', NULL, ?, ?, 0, ?, ?)
+    `).run(name, role, department, academicYear, email, passwordHash, tokenHash(verificationToken), verificationExpiresAt);
+    logDelivery('Email verification URL', appUrl(req, '/api/auth/verify-email', verificationToken));
+    res.status(201).json({
+      requiresVerification: true,
+      message: 'Account created. Use the verification link sent to your email before logging in. In development, it is printed in the server log.'
+    });
   } catch (err) {
     next(err);
   }
@@ -136,9 +177,12 @@ app.post(['/api/auth/login', '/api/login'], async (req, res, next) => {
     const email = normalizedEmail(req.body.email);
     const password = typeof req.body.password === 'string' ? req.body.password : '';
     if (!validEmail(email) || !password) return res.status(400).json({ error: 'email and password are required' });
-    const user = db.prepare('SELECT id, password_hash FROM users WHERE email = ?').get(email);
+    const user = db.prepare('SELECT id, password_hash, email_verified FROM users WHERE email = ?').get(email);
     if (!user || !user.password_hash || !(await bcrypt.compare(password, user.password_hash))) {
       return res.status(401).json({ error: 'invalid email or password' });
+    }
+    if (!user.email_verified) {
+      return res.status(403).json({ error: 'please verify your email before logging in' });
     }
     await startSession(req, user.id);
     res.json(publicUser(user.id));
@@ -163,6 +207,84 @@ app.post(['/api/auth/logout', '/api/logout'], (req, res, next) => {
   });
 });
 
+app.get(['/api/auth/verify-email', '/api/auth/verify'], (req, res) => {
+    const token = typeof req.query.token === 'string' ? req.query.token : '';
+    const user = token && db.prepare(`
+      SELECT id FROM users
+      WHERE verification_token_hash = ? AND verification_expires_at > ?
+    `).get(tokenHash(token), new Date().toISOString());
+    if (!user) return res.status(400).json({ error: 'verification link is invalid or expired' });
+    db.prepare(`
+      UPDATE users SET email_verified = 1, verification_token_hash = NULL, verification_expires_at = NULL
+      WHERE id = ?
+    `).run(user.id);
+    res.redirect('/?verified=1');
+  });
+
+app.post('/api/auth/resend-verification', async (req, res, next) => {
+    try {
+      const email = normalizedEmail(req.body.email);
+      if (!validEmail(email)) return res.status(400).json({ error: 'valid email is required' });
+      const user = db.prepare('SELECT id, email_verified FROM users WHERE email = ?').get(email);
+      if (user && !user.email_verified) {
+        const token = createToken();
+        db.prepare(`
+          UPDATE users SET verification_token_hash = ?, verification_expires_at = ?
+          WHERE id = ?
+        `).run(tokenHash(token), new Date(Date.now() + TOKEN_TTL_MS).toISOString(), user.id);
+        logDelivery('Email verification URL', appUrl(req, '/api/auth/verify-email', token));
+      }
+      res.json({ message: 'If that account needs verification, a new link has been sent. In development, check the server log.' });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+app.post(['/api/auth/forgot-password', '/api/auth/forgot'], (req, res, next) => {
+    try {
+      const email = normalizedEmail(req.body.email);
+      if (!validEmail(email)) return res.status(400).json({ error: 'valid email is required' });
+      const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+      if (user) {
+        const token = createToken();
+        db.prepare(`
+          UPDATE users SET password_reset_token_hash = ?, password_reset_expires_at = ?
+          WHERE id = ?
+        `).run(tokenHash(token), new Date(Date.now() + TOKEN_TTL_MS).toISOString(), user.id);
+        logDelivery('Password reset URL', `${(process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '')}/?reset=${encodeURIComponent(token)}`);
+      }
+      res.json({ message: 'If an account exists for that email, a reset link has been sent. In development, check the server log.' });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+app.post(['/api/auth/reset-password', '/api/auth/reset'], async (req, res, next) => {
+    try {
+      const token = typeof req.body.token === 'string' ? req.body.token : '';
+      const password = typeof req.body.password === 'string' ? req.body.password : '';
+      const passwordConfirmation = typeof req.body.passwordConfirmation === 'string' ? req.body.passwordConfirmation : '';
+      if (!token) return res.status(400).json({ error: 'reset token is required' });
+      if (password.length < 8 || password.length > 128) {
+        return res.status(400).json({ error: 'password must be 8-128 characters' });
+      }
+      if (password !== passwordConfirmation) return res.status(400).json({ error: 'passwords do not match' });
+      const user = db.prepare(`
+        SELECT id FROM users
+        WHERE password_reset_token_hash = ? AND password_reset_expires_at > ?
+      `).get(tokenHash(token), new Date().toISOString());
+      if (!user) return res.status(400).json({ error: 'reset link is invalid or expired' });
+      const passwordHash = await bcrypt.hash(password, 12);
+      db.prepare(`
+        UPDATE users SET password_hash = ?, password_reset_token_hash = NULL, password_reset_expires_at = NULL
+        WHERE id = ?
+      `).run(passwordHash, user.id);
+      res.json({ message: 'Password reset. You can now log in.' });
+    } catch (err) {
+      next(err);
+    }
+  });
+
 // --- Full profile (always the authenticated user's profile) ---
 function profileResponse(req, res) {
   res.json(publicUser(req.currentUserId));
@@ -171,14 +293,18 @@ app.get(['/api/profile', '/api/profile/:id'], requireAuth, profileResponse);
 
 app.put(['/api/profile', '/api/profile/:id'], requireAuth, (req, res) => {
   const id = req.currentUserId;
-  const { headline, bio, department, tags, availability } = req.body;
+  const { headline, bio, department, academicYear, tags, availability } = req.body;
   if (![headline, bio, department, tags, availability].every(value => validText(value || '', 2000))) {
     return res.status(400).json({ error: 'profile fields are too long' });
   }
+  if (!validProfileChoice(department || '', DEPARTMENTS, LEGACY_DEPARTMENTS) ||
+      !validProfileChoice(academicYear || '', ACADEMIC_YEARS)) {
+    return res.status(400).json({ error: 'select a valid department and academic year' });
+  }
   db.prepare(`
-    UPDATE users SET headline = ?, bio = ?, department = ?, tags = ?, availability = ?
+    UPDATE users SET headline = ?, bio = ?, department = ?, academic_year = ?, tags = ?, availability = ?
     WHERE id = ?
-  `).run(headline || '', bio || '', department || '', tags || '', availability || '', id);
+  `).run(headline || '', bio || '', department || '', academicYear || '', tags || '', availability || '', id);
   res.json(publicUser(id));
 });
 
@@ -188,6 +314,33 @@ app.post(['/api/profile/photo', '/api/profile/:userId/photo'], requireAuth, uplo
   const avatarUrl = `/uploads/${req.file.filename}`;
   db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(avatarUrl, userId);
   res.json({ avatar_url: avatarUrl });
+});
+
+app.delete(['/api/account', '/api/auth/account', '/api/auth/delete-account'], requireAuth, (req, res, next) => {
+  const userId = req.currentUserId;
+  const user = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(userId);
+  try {
+    const removeAccount = db.transaction(() => {
+      db.prepare('DELETE FROM post_likes WHERE user_id = ? OR post_id IN (SELECT id FROM posts WHERE author_id = ?)').run(userId, userId);
+      db.prepare('DELETE FROM posts WHERE author_id = ?').run(userId);
+      db.prepare('DELETE FROM messages WHERE sender_id = ? OR receiver_id = ?').run(userId, userId);
+      db.prepare('DELETE FROM swipes WHERE swiper_id = ? OR target_id = ?').run(userId, userId);
+      db.prepare('DELETE FROM matches WHERE user_a = ? OR user_b = ?').run(userId, userId);
+      db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    });
+    removeAccount();
+    if (user && typeof user.avatar_url === 'string' && user.avatar_url.startsWith('/uploads/')) {
+      const photoPath = path.join(uploadsDir, path.basename(user.avatar_url));
+      fs.unlink(photoPath, () => {});
+    }
+    req.session.destroy(err => {
+      if (err) return next(err);
+      res.clearCookie('connect.sid');
+      res.json({ ok: true });
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // --- Discover: candidates the authenticated user hasn't swiped on yet ---

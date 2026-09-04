@@ -84,6 +84,13 @@ nav.bottom .icon{font-size:19px;}
 .auth form{display:flex;flex-direction:column;gap:10px;}
 .auth label{font-size:12px;color:var(--muted);font-weight:600;}
 .auth input,.auth select{width:100%;border:1px solid var(--line);border-radius:8px;padding:10px 11px;font:13.5px 'Inter';background:var(--card);}
+.password-wrap{display:flex;align-items:center;position:relative;margin-top:4px;}
+.password-wrap input{margin:0;padding-right:58px;}
+.reveal{position:absolute;right:6px;border:0;background:none;color:var(--ivy-dark);font-size:11px;font-weight:600;cursor:pointer;padding:5px;}
 .auth button[type="submit"]{margin-top:4px;background:var(--ivy);color:white;border:none;border-radius:999px;padding:10px 16px;font-weight:600;cursor:pointer;}
 .auth .switch{background:none;border:none;color:var(--ivy-dark);font-size:12.5px;cursor:pointer;margin-top:8px;}
 .auth .error{min-height:18px;color:var(--coral);font-size:12px;margin:2px 0 0;}
+.danger-zone{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #f0c9c4;border-radius:14px;padding:12px 14px;margin-top:18px;background:#fff8f7;}
+.danger-zone strong{font-size:13px;color:#8d2f29;}
+.danger-zone p{margin:4px 0 0;color:var(--muted);font-size:11.5px;line-height:1.4;}
+.danger{border:1px solid #d68a82;border-radius:999px;background:none;color:#9d3028;padding:7px 11px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap;}

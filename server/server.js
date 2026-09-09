@@ -6,17 +6,45 @@ const crypto = require('crypto');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const session = require('express-session');
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 const db = require('./db');
 
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
+// Configure CORS with specific origins instead of reflecting Origin header
+const allowedOrigins = process.env.NODE_ENV === 'production'
+  ? ['https://yourdomain.com'] // Configure with actual domain(s) in production
+  : ['http://localhost:3000', 'http://127.0.0.1:3000']; // Allow local development
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+    return callback(new Error(msg), false);
+  },
+  credentials: true
+}));
 app.use(express.json());
 app.use((req, res, next) => {
   if (!req.body || typeof req.body !== 'object') req.body = {};
   next();
 });
+// Helmet helps secure Express apps by setting various HTTP headers
+app.use(helmet({
+  // Configure Content Security Policy as needed for your app
+  contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false
+}));
+
+// Require SESSION_SECRET in production, allow fallback only in development
+const sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret && process.env.NODE_ENV === 'production') {
+  throw new Error('SESSION_SECRET environment variable is required in production');
+}
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'sprout-development-session-secret',
+  secret: sessionSecret || 'sprout-development-session-secret-change-me',
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -26,10 +54,24 @@ app.use(session({
     maxAge: 1000 * 60 * 60 * 24 * 30
   }
 }));
+// Rate limiting to prevent brute force attacks
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  message: { error: 'Too many requests from this IP, please try again later.' }
+});
+
+// Apply rate limiting to all API routes
+app.use('/api/', apiLimiter);
+
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // --- Photo uploads ---
-const uploadsDir = path.join(__dirname, '..', 'public', 'uploads');
+// Configure uploads directory (allows for cloud storage abstraction in future)
+const uploadsDir = path.join(__dirname, '..', 'public',
+  process.env.UPLOADS_DIR || 'uploads');
 fs.mkdirSync(uploadsDir, { recursive: true });
 app.use('/uploads', express.static(uploadsDir));
 
@@ -37,7 +79,9 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsDir),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname) || '.jpg';
-    cb(null, `user-${req.session.userId}-${Date.now()}${ext}`);
+    // Sanitize filename to prevent path traversal attempts
+    const sanitizedExt = ext.replace(/[^a-zA-Z0-9.]/g, '');
+    cb(null, `user-${req.session.userId}-${Date.now()}${sanitizedExt || '.jpg'}`);
   }
 });
 const upload = multer({
@@ -121,7 +165,10 @@ function appUrl(req, route, token) {
 }
 
 function logDelivery(label, url) {
-  console.log(`[sprout] ${label}: ${url}`);
+  // Only log delivery URLs in development to avoid exposing tokens in production logs
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[sprout] ${label}: ${url}`);
+  }
 }
 
 function validChoice(value, choices) {
@@ -497,6 +544,37 @@ app.use((err, req, res, next) => {
   next();
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Sprout server running at http://localhost:${PORT}`);
+});
+
+// Graceful shutdown
+const gracefulShutdown = () => {
+  console.log('Received shutdown signal, closing server...');
+  server.close(async (err) => {
+    if (err) {
+      console.error('Error during shutdown:', err);
+      process.exit(1);
+    }
+    // Close database connection
+    db.close();
+    console.log('Server and database connections closed.');
+    process.exit(0);
+  });
+};
+
+// Handle shutdown signals
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Application specific logging, throwing an error, or other logic here
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  gracefulShutdown();
 });

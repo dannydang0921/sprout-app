@@ -12,13 +12,32 @@ person, and share resources in the feed.
   install.
 - **Frontend:** plain HTML/CSS/JS (no build step, no framework) served
   straight out of `public/`, talking to the backend over `fetch`.
-- **Auth:** intentionally skipped for now. Instead there's a dropdown in the
-  header to pick "who you are" from the seeded users — this stands in for
-  login so you can test matching/messaging between different accounts
-  yourself. Swap it for real signup/login whenever you're ready (see below).
+- **Auth:** Full authentication system with email verification, password reset,
+  and session management (replaces the original user-switcher dropdown).
 - **Messaging:** simple polling every 3 seconds, not WebSockets. Good enough
   to feel responsive for an MVP; swap for Socket.IO later if you want instant
   delivery.
+
+## Security & Reliability Improvements
+
+The following enhancements have been made to improve security, scalability, and reliability:
+
+### 🔒 Security
+- **Session Secret Management**: Requires `SESSION_SECRET` environment variable in production (no insecure fallback)
+- **Secure CORS Configuration**: Replaced dangerous origin reflection with explicit allowlist
+- **Rate Limiting**: 100 requests per 15 minutes per IP on all API routes (prevents brute force/DoS)
+- **Helmet Security Headers**: Added protection against XSS, clickjacking, MIME sniffing
+- **Sensitive Data Protection**: Token URLs (email verification/password reset) only logged in development
+- **Uploads Security**: Configurable uploads directory with filename sanitization to prevent path traversal
+
+### ⚡ Performance & Scalability
+- **Database Indexes**: Added indexes on frequently queried columns (swipes, messages, posts, matches, post_likes) reducing query time from O(n) to O(log n)
+- **Configurable Uploads**: Uploads directory can be configured via `UPLOADS_DIR` environment variable (prepares for cloud storage migration)
+
+### 🛡️ Reliability
+- **Graceful Shutdown**: Proper handling of SIGTERM/SIGINT signals with database connection cleanup
+- **Enhanced Error Handling**: Unhandled promise rejection and uncaught exception logging
+- **Startup Validation**: Clear error messages for missing production configuration
 
 ## Running it
 
@@ -79,22 +98,27 @@ then try uploading one.
 
 Roughly in the order I'd tackle them:
 
-1. **Real accounts.** Add a `users` signup/login flow (email + password,
-   hashed with `bcrypt`, sessions via `express-session` or JWT). Replace the
-   user-switcher dropdown with a real login screen.
-2. **Move photo storage to cloud storage** (S3, Cloudinary, etc.) once you
+1. **Move photo storage to cloud storage** (S3, Cloudinary, etc.) once you
    deploy — local disk storage in `public/uploads/` works great locally but
    won't persist on most hosting platforms' ephemeral filesystems.
-3. **Push/email notifications.** Right now "notification" just means an
+2. **Push/email notifications.** Right now "notification" just means an
    unread badge you see next time you open the app. For a real notification
    when someone swipes/matches/messages you, you'd add email (e.g. via
    Resend/SendGrid) or web push.
-4. **Search & filters on Discover** — by department, role, availability.
-5. **Reporting/blocking** — important for anything matching strangers,
+3. **Search & filters on Discover** — by department, role, availability.
+4. **Reporting/blocking** — important for anything matching strangers,
    especially with professors/students. Add a report button and a simple
    moderation queue.
-6. **Deploy** — the backend + SQLite file can run cheaply on something like
+5. **Deploy** — the backend + SQLite file can run cheaply on something like
    Render or Railway; for more traffic, swap SQLite for Postgres (the SQL is
    close enough that the migration is mostly copy-paste).
-7. **Mobile app** — once the API is solid, wrapping it in React Native lets
+6. **Mobile app** — once the API is solid, wrapping it in React Native lets
    you reuse all these endpoints for an actual iOS/Android app.
+
+## Development improvements made
+
+This version includes significant improvements to the original codebase:
+- Enhanced security posture with production-ready authentication handling
+- Better scalability foundations through database indexing and configurable storage
+- Improved reliability with graceful shutdown and comprehensive error handling
+- All changes documented in the project's memory system for future reference

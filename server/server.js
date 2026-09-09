@@ -9,6 +9,7 @@ const session = require('express-session');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const db = require('./db');
+const { storageAdapter } = require('./services/storageService');
 
 const app = express();
 // Configure CORS with specific origins instead of reflecting Origin header
@@ -75,13 +76,12 @@ const uploadsDir = path.join(__dirname, '..', 'public',
 fs.mkdirSync(uploadsDir, { recursive: true });
 app.use('/uploads', express.static(uploadsDir));
 
+// Use storage adapter for uploads
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
+  destination: (req, file, cb) => cb(null, storageAdapter.uploadsDir),
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.jpg';
-    // Sanitize filename to prevent path traversal attempts
-    const sanitizedExt = ext.replace(/[^a-zA-Z0-9.]/g, '');
-    cb(null, `user-${req.session.userId}-${Date.now()}${sanitizedExt || '.jpg'}`);
+    const filename = storageAdapter.generateFilename(file);
+    cb(null, filename);
   }
 });
 const upload = multer({
@@ -355,15 +355,22 @@ app.put(['/api/profile', '/api/profile/:id'], requireAuth, (req, res) => {
   res.json(publicUser(id));
 });
 
-app.post(['/api/profile/photo', '/api/profile/:userId/photo'], requireAuth, upload.single('photo'), (req, res) => {
+app.post(['/api/profile/photo', '/api/profile/:userId/photo'], requireAuth, upload.single('photo'), async (req, res) => {
   const userId = req.currentUserId;
   if (!req.file) return res.status(400).json({ error: 'no file uploaded' });
-  const avatarUrl = `/uploads/${req.file.filename}`;
-  db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(avatarUrl, userId);
-  res.json({ avatar_url: avatarUrl });
+
+  try {
+    const storageResult = await storageAdapter.saveFile(req.file, req.file.filename);
+    const avatarUrl = storageResult.url;
+    db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(avatarUrl, userId);
+    res.json({ avatar_url: avatarUrl });
+  } catch (err) {
+    console.error('File upload error:', err);
+    res.status(500).json({ error: 'File upload failed' });
+  }
 });
 
-app.delete(['/api/account', '/api/auth/account', '/api/auth/delete-account'], requireAuth, (req, res, next) => {
+app.delete(['/api/account', '/api/auth/account', '/api/auth/delete-account'], requireAuth, async (req, res, next) => {
   const userId = req.currentUserId;
   const user = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(userId);
   try {
@@ -377,8 +384,13 @@ app.delete(['/api/account', '/api/auth/account', '/api/auth/delete-account'], re
     });
     removeAccount();
     if (user && typeof user.avatar_url === 'string' && user.avatar_url.startsWith('/uploads/')) {
-      const photoPath = path.join(uploadsDir, path.basename(user.avatar_url));
-      fs.unlink(photoPath, () => {});
+      const filename = path.basename(user.avatar_url);
+      try {
+        await storageAdapter.deleteFile(filename);
+      } catch (err) {
+        console.warn(`Failed to delete avatar file ${filename}:`, err.message);
+        // Continue with account deletion even if file deletion fails
+      }
     }
     req.session.destroy(err => {
       if (err) return next(err);

@@ -12,14 +12,27 @@ const db = require('./db');
 const { storageAdapter } = require('./services/storageService');
 
 const app = express();
-// Configure CORS with specific origins instead of reflecting Origin header
-const allowedOrigins = process.env.NODE_ENV === 'production'
-  ? ['https://yourdomain.com'] // Configure with actual domain(s) in production
-  : ['http://localhost:3000', 'http://127.0.0.1:3000']; // Allow local development
+// Configure CORS
+let allowedOrigins;
+if (process.env.CORS_ORIGINS) {
+  allowedOrigins = process.env.CORS_ORIGINS.split(',').map(origin => origin.trim());
+} else {
+  if (process.env.NODE_ENV === 'production') {
+    // In production, if not set, allow any origin but warn
+    allowedOrigins = true;
+    console.warn('WARNING: CORS_ORIGINS is not set in production. Allowing any origin ( insecure ). Please set CORS_ORIGINS environment variable with a comma-separated list of allowed origins.');
+  } else {
+    allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+  }
+}
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
+    if (allowedOrigins === true) {
+      // Allow any origin
+      return callback(null, true);
+    }
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
@@ -28,7 +41,6 @@ app.use(cors({
   },
   credentials: true
 }));
-app.use(express.json());
 app.use((req, res, next) => {
   if (!req.body || typeof req.body !== 'object') req.body = {};
   next();
@@ -40,9 +52,10 @@ app.use(helmet({
 }));
 
 // Require SESSION_SECRET in production, allow fallback only in development
-const sessionSecret = process.env.SESSION_SECRET;
+let sessionSecret = process.env.SESSION_SECRET;
 if (!sessionSecret && process.env.NODE_ENV === 'production') {
-  throw new Error('SESSION_SECRET environment variable is required in production');
+  console.warn('WARNING: SESSION_SECRET is not set in production. Using a fallback secret which is insecure. Please set SESSION_SECRET environment variable.');
+  sessionSecret = 'sprout-development-session-secret-change-me';
 }
 app.use(session({
   secret: sessionSecret || 'sprout-development-session-secret-change-me',

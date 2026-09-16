@@ -12,6 +12,7 @@ const db = require('./db');
 const { storageAdapter } = require('./services/storageService');
 
 const app = express();
+const PORT = process.env.PORT || 3001;
 // Configure CORS
 let allowedOrigins;
 if (process.env.CORS_ORIGINS) {
@@ -22,7 +23,7 @@ if (process.env.CORS_ORIGINS) {
     allowedOrigins = true;
     console.warn('WARNING: CORS_ORIGINS is not set in production. Allowing any origin ( insecure ). Please set CORS_ORIGINS environment variable with a comma-separated list of allowed origins.');
   } else {
-    allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+    allowedOrigins = [`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`];
   }
 }
 app.use(cors({
@@ -107,7 +108,6 @@ const upload = multer({
   }
 });
 
-const PORT = process.env.PORT || 3001;
 const TOKEN_TTL_MS = 60 * 60 * 1000;
 const DEPARTMENTS = ['Computer Science', 'Biology', 'Economics', 'Mathematics', 'Physics', 'Undeclared', 'Other'];
 // Legacy department options for validation during migration period

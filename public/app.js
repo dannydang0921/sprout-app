@@ -18,6 +18,12 @@ function avatarHtml(user, extraStyle=''){
 let currentUser = null;
 let currentUserId = null;
 let discoverQueue = [];
+
+const tutorialSteps = [
+  { title: "Welcome to Sprout", body: "Swipe through professors, tutors, and peers who match your interests. Let's take a quick look around." },
+  { title: "Make a connection", body: "Tap ♥ to connect with someone, or ✕ to pass. If they've connected with you too, it's a match." },
+  { title: "Everything else lives down here", body: "Matches, Messages, the campus tips Feed, and your Profile are all one tap away." }
+];
 let matches = [];
 let activeTab = 'discover';
 let openThreadWith = null;
@@ -112,6 +118,9 @@ async function loadForCurrentUser(){
   matches = await api('/matches');
   await refreshUnread();
   render();
+  if (!currentUser.has_seen_tutorial) {
+    showTutorial();
+  }
 }
 
 async function refreshUnread(){
@@ -361,6 +370,49 @@ function showMatchModal(p){
   document.body.appendChild(overlay);
 }
 function closeOverlay(){ document.querySelector('.overlay')?.remove(); render(); }
+
+let tutorialStep = 0;
+
+function showTutorial(){
+  tutorialStep = 0;
+  renderTutorialStep();
+}
+
+function renderTutorialStep(){
+  document.querySelector('.overlay')?.remove();
+  const step = tutorialSteps[tutorialStep];
+  const isLast = tutorialStep === tutorialSteps.length - 1;
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `
+    <div class="matchcard">
+      <div class="stamp">${tutorialStep + 1} / ${tutorialSteps.length}</div>
+      <h3 style="margin:8px 0;">${escapeHtml(step.title)}</h3>
+      <p>${escapeHtml(step.body)}</p>
+      <div class="btnrow">
+        ${isLast
+          ? `<button class="primary" onclick="finishTutorial()">Got it</button>`
+          : `<button class="primary" onclick="nextTutorialStep()">Next</button>`}
+        <button class="ghost" onclick="finishTutorial()">Skip</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+function nextTutorialStep(){
+  tutorialStep++;
+  renderTutorialStep();
+}
+
+async function finishTutorial(){
+  document.querySelector('.overlay')?.remove();
+  currentUser.has_seen_tutorial = 1;
+  try {
+    await api('/tutorial/seen', { method: 'POST' });
+  } catch (err) {
+    console.error('Failed to save tutorial status:', err);
+  }
+}
 function goToThread(id){
   document.querySelector('.overlay')?.remove();
   activeTab = 'messages'; openThreadWith = id;
@@ -533,6 +585,8 @@ async function loadProfile(){
       <div><strong>Delete account</strong><p>This permanently removes your profile, posts, messages, matches, and likes.</p></div>
       <button class="danger" onclick="deleteAccount()">Delete account</button>
     </div>
+    <!-- TEMP: testing only, remove before beta -->
+    <div class="row2"><button onclick="showTutorial()">Replay tutorial (testing only)</button></div>
   `;
 
   document.getElementById('photoInput').addEventListener('change', async (e) => {

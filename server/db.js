@@ -79,6 +79,7 @@ const wantedCols = {
   email: "TEXT",
   password_hash: "TEXT",
   academic_year: "TEXT",
+  has_seen_tutorial: "INTEGER NOT NULL DEFAULT 0",
   email_verified: "INTEGER NOT NULL DEFAULT 0",
   verification_token_hash: "TEXT",
   verification_expires_at: "TEXT",

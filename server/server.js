@@ -41,6 +41,7 @@ app.use(cors({
   },
   credentials: true
 }));
+app.use(express.json());
 app.use((req, res, next) => {
   if (!req.body || typeof req.body !== 'object') req.body = {};
   next();
@@ -68,7 +69,7 @@ app.use(session({
     maxAge: 1000 * 60 * 60 * 24 * 30
   }
 }));
-// Rate limiting to prevent brute force attacks
+ // Rate limiting to prevent brute force attacks
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
@@ -350,9 +351,9 @@ app.post('/api/auth/reset-password', async (req, res, next) => {
 function profileResponse(req, res) {
   res.json(publicUser(req.currentUserId));
 }
-app.get('/api/profile/:id?', requireAuth, profileResponse);
+app.get('/api/profile', requireAuth, profileResponse);
 
-app.put('/api/profile/:id?', requireAuth, (req, res) => {
+app.put('/api/profile', requireAuth, (req, res) => {
   const id = req.currentUserId;
   const { headline, bio, department, academicYear, tags, availability } = req.body;
   if (![headline, bio, department, tags, availability].every(value => validText(value || '', 2000))) {
@@ -417,7 +418,7 @@ app.delete('/api/auth/delete-account', requireAuth, async (req, res, next) => {
 });
 
 // --- Discover: candidates the authenticated user hasn't swiped on yet ---
-app.get('/api/discover/:userId?', requireAuth, (req, res) => {
+app.get('/api/discover', requireAuth, (req, res) => {
   const userId = req.currentUserId;
   const candidates = db.prepare(`
     SELECT id, name, role, department, headline, bio, tags, availability, avatar_url
@@ -460,7 +461,7 @@ app.post('/api/swipe', requireAuth, (req, res) => {
 });
 
 // --- Matches for the authenticated user ---
-app.get('/api/matches/:userId?', requireAuth, (req, res) => {
+app.get('/api/matches', requireAuth, (req, res) => {
   const userId = req.currentUserId;
   const rows = db.prepare(`
     SELECT u.id, u.name, u.role, u.department, u.headline, u.bio, u.tags, u.availability, u.avatar_url
@@ -505,7 +506,7 @@ app.post('/api/messages', requireAuth, (req, res) => {
 });
 
 // Unread count for the authenticated user, useful for a notification badge
-app.get('/api/notifications/:userId?', requireAuth, (req, res) => {
+app.get('/api/notifications', requireAuth, (req, res) => {
   const userId = req.currentUserId;
   const unread = db.prepare(
     'SELECT COUNT(*) AS c FROM messages WHERE receiver_id = ? AND read = 0'
@@ -521,6 +522,12 @@ app.post('/api/messages/read', requireAuth, (req, res) => {
   db.prepare(
     'UPDATE messages SET read = 1 WHERE receiver_id = ? AND sender_id = ?'
   ).run(userId, otherId);
+  res.json({ ok: true });
+});
+
+app.post("/api/tutorial/seen", requireAuth, (req, res) => {
+  const userId = req.currentUserId;
+  db.prepare("UPDATE users SET has_seen_tutorial = 1 WHERE id = ?").run(userId);
   res.json({ ok: true });
 });
 
@@ -569,9 +576,11 @@ app.use((err, req, res, next) => {
   next();
 });
 
-const server = app.listen(PORT, () => {
-  console.log(`Sprout server running at http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  const server = app.listen(PORT, () => {
+    console.log(`Sprout server running at http://localhost:${PORT}`);
+  });
+}
 
 // Graceful shutdown
 const gracefulShutdown = () => {
@@ -603,3 +612,5 @@ process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
   gracefulShutdown();
 });
+
+module.exports = app;

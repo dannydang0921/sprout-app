@@ -144,7 +144,9 @@ let authNotice = '';
 let resetToken = '';
 const departmentOptions = ['Computer Science', 'Biology', 'Economics', 'Mathematics', 'Physics', 'Undeclared', 'Other'];
 const yearOptions = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'Faculty', 'Other'];
-const legacyDepartmentOptions = ['Calculus II & III', 'Intro Physics', 'CS'];
+// Legacy department options kept for reference but not used in current UI
+// (Migration has already updated existing records to use standard department names)
+const legacyDepartmentOptions = [];
 
 function selectOptions(options, selected, placeholder = 'Select one') {
   const values = [...new Set(options.concat(selected && !options.includes(selected) ? [selected] : []))];

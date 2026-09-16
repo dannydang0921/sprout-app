@@ -52,6 +52,7 @@ const upload = multer({
 const PORT = process.env.PORT || 3001;
 const TOKEN_TTL_MS = 60 * 60 * 1000;
 const DEPARTMENTS = ['Computer Science', 'Biology', 'Economics', 'Mathematics', 'Physics', 'Undeclared', 'Other'];
+// Legacy department options for validation during migration period
 const LEGACY_DEPARTMENTS = ['Calculus II & III', 'Intro Physics', 'CS', 'Junior, Biology'];
 const ACADEMIC_YEARS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'Faculty', 'Other'];
 
@@ -133,7 +134,7 @@ function validProfileChoice(value, choices, legacyChoices = []) {
 }
 
 // --- Authentication ---
-app.post(['/api/auth/register', '/api/register'], async (req, res, next) => {
+app.post('/api/auth/register', async (req, res, next) => {
   try {
     const email = normalizedEmail(req.body.email);
     const password = typeof req.body.password === 'string' ? req.body.password : '';
@@ -172,7 +173,7 @@ app.post(['/api/auth/register', '/api/register'], async (req, res, next) => {
   }
 });
 
-app.post(['/api/auth/login', '/api/login'], async (req, res, next) => {
+app.post('/api/auth/login', async (req, res, next) => {
   try {
     const email = normalizedEmail(req.body.email);
     const password = typeof req.body.password === 'string' ? req.body.password : '';
@@ -191,14 +192,14 @@ app.post(['/api/auth/login', '/api/login'], async (req, res, next) => {
   }
 });
 
-app.get(['/api/auth/me', '/api/me'], (req, res) => {
+app.get('/api/auth/me', (req, res) => {
   const userId = parseId(req.session.userId);
   const user = userId && publicUser(userId);
   if (!user) return res.status(401).json({ error: 'authentication required' });
   res.json(user);
 });
 
-app.post(['/api/auth/logout', '/api/logout'], (req, res, next) => {
+app.post('/api/auth/logout', (req, res, next) => {
   if (!req.session) return res.json({ ok: true });
   req.session.destroy(err => {
     if (err) return next(err);
@@ -207,7 +208,7 @@ app.post(['/api/auth/logout', '/api/logout'], (req, res, next) => {
   });
 });
 
-app.get(['/api/auth/verify-email', '/api/auth/verify'], (req, res) => {
+app.get('/api/auth/verify-email', (req, res) => {
     const token = typeof req.query.token === 'string' ? req.query.token : '';
     const user = token && db.prepare(`
       SELECT id FROM users
@@ -240,7 +241,7 @@ app.post('/api/auth/resend-verification', async (req, res, next) => {
     }
   });
 
-app.post(['/api/auth/forgot-password', '/api/auth/forgot'], (req, res, next) => {
+app.post('/api/auth/forgot-password', (req, res, next) => {
     try {
       const email = normalizedEmail(req.body.email);
       if (!validEmail(email)) return res.status(400).json({ error: 'valid email is required' });
@@ -259,7 +260,7 @@ app.post(['/api/auth/forgot-password', '/api/auth/forgot'], (req, res, next) => 
     }
   });
 
-app.post(['/api/auth/reset-password', '/api/auth/reset'], async (req, res, next) => {
+app.post('/api/auth/reset-password', async (req, res, next) => {
     try {
       const token = typeof req.body.token === 'string' ? req.body.token : '';
       const password = typeof req.body.password === 'string' ? req.body.password : '';
@@ -289,9 +290,9 @@ app.post(['/api/auth/reset-password', '/api/auth/reset'], async (req, res, next)
 function profileResponse(req, res) {
   res.json(publicUser(req.currentUserId));
 }
-app.get(['/api/profile', '/api/profile/:id'], requireAuth, profileResponse);
+app.get('/api/profile/:id?', requireAuth, profileResponse);
 
-app.put(['/api/profile', '/api/profile/:id'], requireAuth, (req, res) => {
+app.put('/api/profile/:id?', requireAuth, (req, res) => {
   const id = req.currentUserId;
   const { headline, bio, department, academicYear, tags, availability } = req.body;
   if (![headline, bio, department, tags, availability].every(value => validText(value || '', 2000))) {
@@ -308,7 +309,7 @@ app.put(['/api/profile', '/api/profile/:id'], requireAuth, (req, res) => {
   res.json(publicUser(id));
 });
 
-app.post(['/api/profile/photo', '/api/profile/:userId/photo'], requireAuth, upload.single('photo'), (req, res) => {
+app.post('/api/profile/:userId/photo', requireAuth, upload.single('photo'), (req, res) => {
   const userId = req.currentUserId;
   if (!req.file) return res.status(400).json({ error: 'no file uploaded' });
   const avatarUrl = `/uploads/${req.file.filename}`;
@@ -316,7 +317,7 @@ app.post(['/api/profile/photo', '/api/profile/:userId/photo'], requireAuth, uplo
   res.json({ avatar_url: avatarUrl });
 });
 
-app.delete(['/api/account', '/api/auth/account', '/api/auth/delete-account'], requireAuth, (req, res, next) => {
+app.delete('/api/auth/delete-account', requireAuth, (req, res, next) => {
   const userId = req.currentUserId;
   const user = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(userId);
   try {
@@ -344,7 +345,7 @@ app.delete(['/api/account', '/api/auth/account', '/api/auth/delete-account'], re
 });
 
 // --- Discover: candidates the authenticated user hasn't swiped on yet ---
-app.get(['/api/discover', '/api/discover/:userId'], requireAuth, (req, res) => {
+app.get('/api/discover/:userId?', requireAuth, (req, res) => {
   const userId = req.currentUserId;
   const candidates = db.prepare(`
     SELECT id, name, role, department, headline, bio, tags, availability, avatar_url
@@ -387,7 +388,7 @@ app.post('/api/swipe', requireAuth, (req, res) => {
 });
 
 // --- Matches for the authenticated user ---
-app.get(['/api/matches', '/api/matches/:userId'], requireAuth, (req, res) => {
+app.get('/api/matches/:userId?', requireAuth, (req, res) => {
   const userId = req.currentUserId;
   const rows = db.prepare(`
     SELECT u.id, u.name, u.role, u.department, u.headline, u.bio, u.tags, u.availability, u.avatar_url
@@ -416,7 +417,6 @@ function messagesHandler(req, res) {
   res.json(rows);
 }
 app.get('/api/messages/:otherId', requireAuth, messagesHandler);
-app.get('/api/messages/:userId/:otherId', requireAuth, messagesHandler);
 
 app.post('/api/messages', requireAuth, (req, res) => {
   const senderId = req.currentUserId;
@@ -433,7 +433,7 @@ app.post('/api/messages', requireAuth, (req, res) => {
 });
 
 // Unread count for the authenticated user, useful for a notification badge
-app.get(['/api/notifications', '/api/notifications/:userId'], requireAuth, (req, res) => {
+app.get('/api/notifications/:userId?', requireAuth, (req, res) => {
   const userId = req.currentUserId;
   const unread = db.prepare(
     'SELECT COUNT(*) AS c FROM messages WHERE receiver_id = ? AND read = 0'

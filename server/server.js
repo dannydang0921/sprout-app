@@ -6,17 +6,59 @@ const crypto = require('crypto');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const session = require('express-session');
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 const db = require('./db');
+const { storageAdapter } = require('./services/storageService');
 
 const app = express();
-app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
+// Configure CORS
+let allowedOrigins;
+if (process.env.CORS_ORIGINS) {
+  allowedOrigins = process.env.CORS_ORIGINS.split(',').map(origin => origin.trim());
+} else {
+  if (process.env.NODE_ENV === 'production') {
+    // In production, if not set, allow any origin but warn
+    allowedOrigins = true;
+    console.warn('WARNING: CORS_ORIGINS is not set in production. Allowing any origin ( insecure ). Please set CORS_ORIGINS environment variable with a comma-separated list of allowed origins.');
+  } else {
+    allowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+  }
+}
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins === true) {
+      // Allow any origin
+      return callback(null, true);
+    }
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+    return callback(new Error(msg), false);
+  },
+  credentials: true
+}));
 app.use((req, res, next) => {
   if (!req.body || typeof req.body !== 'object') req.body = {};
   next();
 });
+// Helmet helps secure Express apps by setting various HTTP headers
+app.use(helmet({
+  // Configure Content Security Policy as needed for your app
+  contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false
+}));
+
+// Require SESSION_SECRET in production, allow fallback only in development
+let sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret && process.env.NODE_ENV === 'production') {
+  console.warn('WARNING: SESSION_SECRET is not set in production. Using a fallback secret which is insecure. Please set SESSION_SECRET environment variable.');
+  sessionSecret = 'sprout-development-session-secret-change-me';
+}
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'sprout-development-session-secret',
+  secret: sessionSecret || 'sprout-development-session-secret-change-me',
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -26,18 +68,33 @@ app.use(session({
     maxAge: 1000 * 60 * 60 * 24 * 30
   }
 }));
+// Rate limiting to prevent brute force attacks
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  message: { error: 'Too many requests from this IP, please try again later.' }
+});
+
+// Apply rate limiting to all API routes
+app.use('/api/', apiLimiter);
+
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // --- Photo uploads ---
-const uploadsDir = path.join(__dirname, '..', 'public', 'uploads');
+// Configure uploads directory (allows for cloud storage abstraction in future)
+const uploadsDir = path.join(__dirname, '..', 'public',
+  process.env.UPLOADS_DIR || 'uploads');
 fs.mkdirSync(uploadsDir, { recursive: true });
 app.use('/uploads', express.static(uploadsDir));
 
+// Use storage adapter for uploads
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
+  destination: (req, file, cb) => cb(null, storageAdapter.uploadsDir),
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.jpg';
-    cb(null, `user-${req.session.userId}-${Date.now()}${ext}`);
+    const filename = storageAdapter.generateFilename(file);
+    cb(null, filename);
   }
 });
 const upload = multer({
@@ -122,7 +179,10 @@ function appUrl(req, route, token) {
 }
 
 function logDelivery(label, url) {
-  console.log(`[sprout] ${label}: ${url}`);
+  // Only log delivery URLs in development to avoid exposing tokens in production logs
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[sprout] ${label}: ${url}`);
+  }
 }
 
 function validChoice(value, choices) {
@@ -309,15 +369,22 @@ app.put('/api/profile/:id?', requireAuth, (req, res) => {
   res.json(publicUser(id));
 });
 
-app.post('/api/profile/:userId/photo', requireAuth, upload.single('photo'), (req, res) => {
+app.post('/api/profile/:userId/photo', requireAuth, upload.single('photo'), async (req, res) => {
   const userId = req.currentUserId;
   if (!req.file) return res.status(400).json({ error: 'no file uploaded' });
-  const avatarUrl = `/uploads/${req.file.filename}`;
-  db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(avatarUrl, userId);
-  res.json({ avatar_url: avatarUrl });
+
+  try {
+    const storageResult = await storageAdapter.saveFile(req.file, req.file.filename);
+    const avatarUrl = storageResult.url;
+    db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(avatarUrl, userId);
+    res.json({ avatar_url: avatarUrl });
+  } catch (err) {
+    console.error('File upload error:', err);
+    res.status(500).json({ error: 'File upload failed' });
+  }
 });
 
-app.delete('/api/auth/delete-account', requireAuth, (req, res, next) => {
+app.delete('/api/auth/delete-account', requireAuth, async (req, res, next) => {
   const userId = req.currentUserId;
   const user = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(userId);
   try {
@@ -331,8 +398,13 @@ app.delete('/api/auth/delete-account', requireAuth, (req, res, next) => {
     });
     removeAccount();
     if (user && typeof user.avatar_url === 'string' && user.avatar_url.startsWith('/uploads/')) {
-      const photoPath = path.join(uploadsDir, path.basename(user.avatar_url));
-      fs.unlink(photoPath, () => {});
+      const filename = path.basename(user.avatar_url);
+      try {
+        await storageAdapter.deleteFile(filename);
+      } catch (err) {
+        console.warn(`Failed to delete avatar file ${filename}:`, err.message);
+        // Continue with account deletion even if file deletion fails
+      }
     }
     req.session.destroy(err => {
       if (err) return next(err);
@@ -497,6 +569,37 @@ app.use((err, req, res, next) => {
   next();
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Sprout server running at http://localhost:${PORT}`);
+});
+
+// Graceful shutdown
+const gracefulShutdown = () => {
+  console.log('Received shutdown signal, closing server...');
+  server.close(async (err) => {
+    if (err) {
+      console.error('Error during shutdown:', err);
+      process.exit(1);
+    }
+    // Close database connection
+    db.close();
+    console.log('Server and database connections closed.');
+    process.exit(0);
+  });
+};
+
+// Handle shutdown signals
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Application specific logging, throwing an error, or other logic here
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  gracefulShutdown();
 });

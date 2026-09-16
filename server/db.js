@@ -150,4 +150,15 @@ for (const user of accountUsers) {
 }
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)');
 
+// Add indexes for better query performance on frequently queried columns
+db.exec('CREATE INDEX IF NOT EXISTS idx_swipes_swiper_id ON swipes(swiper_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_swipes_target_id ON swipes(target_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_messages_receiver_id ON messages(receiver_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_messages_read ON messages(read)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_posts_author_id ON posts(author_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_post_likes_user_id ON post_likes(user_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_matches_user_a ON matches(user_a)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_matches_user_b ON matches(user_b)');
+
 module.exports = db;

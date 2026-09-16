@@ -130,7 +130,8 @@ function userExists(id) {
 function publicUser(id) {
   return db.prepare(`
     SELECT id, name, role, department, academic_year, headline, bio, tags, availability, avatar_url, email,
-      email_verified
+      email_verified,
+      has_seen_tutorial
     FROM users WHERE id = ?
   `).get(id);
 }

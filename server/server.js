@@ -91,14 +91,8 @@ const uploadsDir = path.join(__dirname, '..', 'public',
 fs.mkdirSync(uploadsDir, { recursive: true });
 app.use('/uploads', express.static(uploadsDir));
 
-// Use storage adapter for uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, storageAdapter.uploadsDir),
-  filename: (req, file, cb) => {
-    const filename = storageAdapter.generateFilename(file);
-    cb(null, filename);
-  }
-});
+// Use memory storage for multer to work with both local and cloud storage adapters
+const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
@@ -376,7 +370,8 @@ app.post('/api/profile/:userId/photo', requireAuth, upload.single('photo'), asyn
   if (!req.file) return res.status(400).json({ error: 'no file uploaded' });
 
   try {
-    const storageResult = await storageAdapter.saveFile(req.file, req.file.filename);
+    const filename = storageAdapter.generateFilename(req.file);
+    const storageResult = await storageAdapter.saveFile(req.file, filename);
     const avatarUrl = storageResult.url;
     db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(avatarUrl, userId);
     res.json({ avatar_url: avatarUrl });
@@ -399,12 +394,17 @@ app.delete('/api/auth/delete-account', requireAuth, async (req, res, next) => {
       db.prepare('DELETE FROM users WHERE id = ?').run(userId);
     });
     removeAccount();
-    if (user && typeof user.avatar_url === 'string' && user.avatar_url.startsWith('/uploads/')) {
-      const filename = path.basename(user.avatar_url);
+    if (user && typeof user.avatar_url === 'string' && user.avatar_url) {
       try {
+        // For local storage, extract filename from /uploads/ URL
+        // For Cloudinary, the storageAdapter handles URL to public ID conversion internally
+        let filename = user.avatar_url;
+        if (filename.startsWith('/uploads/')) {
+          filename = path.basename(filename);
+        }
         await storageAdapter.deleteFile(filename);
       } catch (err) {
-        console.warn(`Failed to delete avatar file ${filename}:`, err.message);
+        console.warn(`Failed to delete avatar file:`, err.message);
         // Continue with account deletion even if file deletion fails
       }
     }

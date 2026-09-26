@@ -68,6 +68,28 @@ CREATE TABLE IF NOT EXISTS post_likes (
   PRIMARY KEY(post_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  reporter_id INTEGER NOT NULL,
+  reported_id INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  details TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (reporter_id) REFERENCES users(id),
+  FOREIGN KEY (reported_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS blocks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  blocker_id INTEGER NOT NULL,
+  blocked_id INTEGER NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(blocker_id, blocked_id),
+  FOREIGN KEY (blocker_id) REFERENCES users(id),
+  FOREIGN KEY (blocked_id) REFERENCES users(id)
+);
+
 
 CREATE TABLE IF NOT EXISTS group_chats (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

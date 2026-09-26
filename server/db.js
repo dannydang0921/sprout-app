@@ -67,6 +67,37 @@ CREATE TABLE IF NOT EXISTS post_likes (
   user_id INTEGER NOT NULL,
   PRIMARY KEY(post_id, user_id)
 );
+
+
+CREATE TABLE IF NOT EXISTS group_chats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  created_by INTEGER NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (created_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS group_members (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  role TEXT NOT NULL CHECK(role IN ('admin', 'member')) DEFAULT 'member',
+  joined_at TEXT DEFAULT (datetime('now')),
+  UNIQUE(group_id, user_id),
+  FOREIGN KEY (group_id) REFERENCES group_chats(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS group_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  group_id INTEGER NOT NULL,
+  sender_id INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  read_by TEXT DEFAULT '',  -- Comma-separated list of user IDs who have read the message
+  FOREIGN KEY (group_id) REFERENCES group_chats(id) ON DELETE CASCADE,
+  FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
+);
 `);
 
 // Lightweight migration: add any new columns to an existing db from before
@@ -161,5 +192,15 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_posts_author_id ON posts(author_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_post_likes_user_id ON post_likes(user_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_matches_user_a ON matches(user_a)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_matches_user_b ON matches(user_b)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_users_department ON users(department)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_users_academic_year ON users(academic_year)');
+
+// Add indexes for group chat tables
+db.exec('CREATE INDEX IF NOT EXISTS idx_group_members_group_id ON group_members(group_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_group_members_user_id ON group_members(user_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_group_messages_group_id ON group_messages(group_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_group_messages_created_at ON group_messages(created_at)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_group_chats_created_by ON group_chats(created_by)');
 
 module.exports = db;

@@ -464,13 +464,501 @@ app.post('/api/swipe', requireAuth, (req, res) => {
 // --- Matches for the authenticated user ---
 app.get('/api/matches', requireAuth, (req, res) => {
   const userId = req.currentUserId;
-  const rows = db.prepare(`
+  const { department, role, academicYear } = req.query;
+
+  // Validate filter values using same pattern as profile updates
+  const LEGACY_DEPARTMENTS = ['Calculus II & III', 'Intro Physics', 'CS', 'Junior, Biology'];
+  const DEPARTMENTS = ['Computer Science', 'Biology', 'Economics', 'Mathematics', 'Physics', 'Undeclared', 'Other'];
+  const ACADEMIC_YEARS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'Faculty', 'Other'];
+
+  function validChoice(value, choices) {
+    return typeof value === 'string' && choices.includes(value);
+  }
+
+  function validProfileChoice(value, choices, legacyChoices = []) {
+    return value === '' || validChoice(value, choices.concat(legacyChoices));
+  }
+
+  if (department && !validProfileChoice(department, DEPARTMENTS, LEGACY_DEPARTMENTS)) {
+    return res.status(400).json({ error: 'Invalid department filter' });
+  }
+  if (role && !validChoice(role, ['professor', 'tutor', 'peer'])) {
+    return res.status(400).json({ error: 'Invalid role filter' });
+  }
+  if (academicYear && !validChoice(academicYear, ACADEMIC_YEARS)) {
+    return res.status(400).json({ error: 'Invalid academic year filter' });
+  }
+
+  let query = `
     SELECT u.id, u.name, u.role, u.department, u.headline, u.bio, u.tags, u.availability, u.avatar_url
     FROM matches m
-    JOIN users u ON u.id = (CASE WHEN m.user_a = ? THEN m.user_b ELSE m.user_a END)
-    WHERE m.user_a = ? OR m.user_b = ?
-  `).all(userId, userId, userId);
+    JOIN users u ON (u.id = m.user_a OR u.id = m.user_b)
+    WHERE (m.user_a = ? AND u.id = m.user_b) OR (m.user_b = ? AND u.id = m.user_a)
+`;
+
+  // Add filters
+  if (department) {
+    query += ' AND u.department = ?';
+    params.push(department);
+  }
+  if (role) {
+    query += ' AND u.role = ?';
+    params.push(role);
+  }
+  if (academicYear) {
+    query += ' AND u.academic_year = ?';
+    params.push(academicYear);
+  }
+
+  const params = [userId, userId, userId, userId, userId];
+
+  // Exclude users already swiped on (to mirror discover behavior)
+  query += `
+    AND id NOT IN (SELECT target_id FROM swipes WHERE swiper_id = ?)`;
+  params.push(userId);
+
+  query += ' ORDER BY name';
+
+  const rows = db.prepare(query).all(...params);
   res.json(rows);
+});
+
+// --- Search for users ---
+app.get('/api/search', requireAuth, (req, res) => {
+  const userId = req.currentUserId;
+  const { q, department, role, academicYear, limit = 10 } = req.query;
+
+  // Validate limit
+  const parseLimit = parseInt(limit, 10);
+  if (isNaN(parseLimit) || parseLimit < 1 || parseLimit > 50) {
+    return res.status(400).json({ error: 'Limit must be between 1 and 50' });
+  }
+
+  // Validate filter values using same pattern as profile updates
+  const LEGACY_DEPARTMENTS = ['Calculus II & III', 'Intro Physics', 'CS', 'Junior, Biology'];
+  const DEPARTMENTS = ['Computer Science', 'Biology', 'Economics', 'Mathematics', 'Physics', 'Undeclared', 'Other'];
+  const ACADEMIC_YEARS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'Faculty', 'Other'];
+
+  function validChoice(value, choices) {
+    return typeof value === 'string' && choices.includes(value);
+  }
+
+  function validProfileChoice(value, choices, legacyChoices = []) {
+    return value === '' || validChoice(value, choices.concat(legacyChoices));
+  }
+
+  if (department && !validProfileChoice(department, DEPARTMENTS, LEGACY_DEPARTMENTS)) {
+    return res.status(400).json({ error: 'Invalid department filter' });
+  }
+  if (role && !validChoice(role, ['professor', 'tutor', 'peer'])) {
+    return res.status(400).json({ error: 'Invalid role filter' });
+  }
+  if (academicYear && !validChoice(academicYear, ACADEMIC_YEARS)) {
+    return res.status(400).json({ error: 'Invalid academic year filter' });
+  }
+
+  let query = `
+    SELECT id, name, role, department, headline, bio, tags, availability, avatar_url
+    FROM users
+    WHERE id != ?`;
+  const params = [userId];
+
+  // Add text search if query provided
+  if (q) {
+    query += ' AND (name LIKE ? OR department LIKE ? OR role LIKE ?)';
+    const searchTerm = `%${q}%`;
+    params.push(searchTerm, searchTerm, searchTerm);
+  }
+
+  // Add filters
+  if (department) {
+    query += ' AND department = ?';
+    params.push(department);
+  }
+  if (role) {
+    query += ' AND role = ?';
+    params.push(role);
+  }
+  if (academicYear) {
+    query += ' AND academic_year = ?';
+    params.push(academicYear);
+  }
+
+  
+  // Exclude users already swiped on (to mirror discover behavior)
+  query += `
+    AND id NOT IN (SELECT target_id FROM swipes WHERE swiper_id = ?)`;
+  params.push(userId);
+
+  query += ' ORDER BY name LIMIT ?';
+  params.push(parseLimit);
+
+  const rows = db.prepare(query).all(...params);
+  res.json(rows);
+});
+
+// --- Group Chat Endpoints ---
+
+// Get all group chats for the authenticated user
+app.get('/api/groupchats', requireAuth, (req, res) => {
+  const userId = req.currentUserId;
+
+  if (!userId) {
+    return res.status(401).json({ error: 'authentication required' });
+  }
+
+  const query = `
+    SELECT gc.id, gc.name, gc.created_by, gc.created_at,
+           u.name as creator_name
+    FROM group_chats gc
+    JOIN group_members gm ON gc.id = gm.group_id
+    JOIN users u ON gc.created_by = u.id
+    WHERE gm.user_id = ?
+    ORDER BY gc.created_at DESC
+  `;
+
+  const rows = db.prepare(query).all(userId);
+  res.json(rows);
+});
+
+// Create a new group chat
+app.post('/api/groupchats', requireAuth, (req, res) => {
+  const userId = req.currentUserId;
+  const { name } = req.body;
+
+  if (!userId) {
+    return res.status(401).json({ error: 'authentication required' });
+  }
+
+  if (!name || typeof name !== 'string' || !name.trim() || name.trim().length > 100) {
+    return res.status(400).json({ error: 'valid name (1-100 characters) required' });
+  }
+
+  const trimmedName = name.trim();
+
+  // Insert the group chat
+  const result = db.prepare(`
+    INSERT INTO group_chats (name, created_by)
+    VALUES (?, ?)
+  `).run(trimmedName, userId);
+
+  const groupId = result.lastInsertRowid;
+
+  // Automatically add the creator as an admin member
+  db.prepare(`
+    INSERT INTO group_members (group_id, user_id, role)
+    VALUES (?, ?, 'admin')
+  `).run(groupId, userId);
+
+  // Return the created group with creator info
+  const group = db.prepare(`
+    SELECT gc.id, gc.name, gc.created_by, gc.created_at,
+           u.name as creator_name
+    FROM group_chats gc
+    JOIN users u ON gc.created_by = u.id
+    WHERE gc.id = ?
+  `).get(groupId);
+
+  res.status(201).json(group);
+});
+
+// Get details of a specific group chat
+app.get('/api/groupchats/:groupId', requireAuth, (req, res) => {
+  const userId = req.currentUserId;
+  const groupId = parseInt(req.params.groupId, 10);
+
+  if (!userId) {
+    return res.status(401).json({ error: 'authentication required' });
+  }
+
+  if (!groupId || isNaN(groupId)) {
+    return res.status(400).json({ error: 'valid groupId required' });
+  }
+
+  // Check if user is a member of the group
+  const membership = db.prepare(`
+    SELECT id FROM group_members
+    WHERE group_id = ? AND user_id = ?
+  `).get(groupId, userId);
+
+  if (!membership) {
+    return res.status(403).json({ error: 'access denied: not a member of this group' });
+  }
+
+  const group = db.prepare(`
+    SELECT gc.id, gc.name, gc.created_by, gc.created_at,
+           u.name as creator_name,
+           COUNT(gm.user_id) as member_count
+    FROM group_chats gc
+    JOIN users u ON gc.created_by = u.id
+    LEFT JOIN group_members gm ON gc.id = gm.group_id
+    WHERE gc.id = ?
+    GROUP BY gc.id, gc.name, gc.created_by, gc.created_at, u.name
+  `).get(groupId);
+
+  if (!group) {
+    return res.status(404).json({ error: 'group not found' });
+  }
+
+  res.json(group);
+});
+
+// Add a member to a group chat
+app.post('/api/groupchats/:groupId/members', requireAuth, (req, res) => {
+  const userId = req.currentUserId; // The user making the request (must be admin)
+  const groupId = parseInt(req.params.groupId, 10);
+  const { userIdToAdd } = req.body;
+
+  if (!userId) {
+    return res.status(401).json({ error: 'authentication required' });
+  }
+
+  if (!groupId || isNaN(groupId)) {
+    return res.status(400).json({ error: 'valid groupId required' });
+  }
+
+  if (!userIdToAdd || isNaN(userIdToAdd)) {
+    return res.status(400).json({ error: 'valid userIdToAdd required' });
+  }
+
+  // Check if the requesting user is an admin of the group
+  const requesterMembership = db.prepare(`
+    SELECT role FROM group_members
+    WHERE group_id = ? AND user_id = ?
+  `).get(groupId, userId);
+
+  if (!requesterMembership || requesterMembership.role !== 'admin') {
+    return res.status(403).json({ error: 'permission denied: only admins can add members' });
+  }
+
+  // Check if the user to add exists
+  const userToAddExists = db.prepare(`
+    SELECT id FROM users WHERE id = ?
+  `).get(userIdToAdd);
+
+  if (!userToAddExists) {
+    return res.status(404).json({ error: 'user to add not found' });
+  }
+
+  // Check if the user to add is already in the group
+  const existingMembership = db.prepare(`
+    SELECT id FROM group_members
+    WHERE group_id = ? AND user_id = ?
+  `).get(groupId, userIdToAdd);
+
+  if (existingMembership) {
+    return res.status(400).json({ error: 'user is already a member of this group' });
+  }
+
+  
+  try {
+    // Add the user to the group
+    db.prepare(`
+      INSERT INTO group_members (group_id, user_id, role)
+      VALUES (?, ?, 'member')
+    `).run(groupId, userIdToAdd);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Add group member error:', err);
+    res.status(500).json({ error: 'Failed to add member to group' });
+  }
+});
+
+// Remove a member from a group chat
+app.delete('/api/groupchats/:groupId/members/:userIdToRemove', requireAuth, (req, res) => {
+  const userId = req.currentUserId; // The user making the request (must be admin)
+  const groupId = parseInt(req.params.groupId, 10);
+  const userIdToRemove = parseInt(req.params.userIdToRemove, 10);
+
+  if (!userId) {
+    return res.status(401).json({ error: 'authentication required' });
+  }
+
+  if (!groupId || isNaN(groupId)) {
+    return res.status(400).json({ error: 'valid groupId required' });
+  }
+
+  if (!userIdToRemove || isNaN(userIdToRemove)) {
+    return res.status(400).json({ error: 'valid userIdToRemove required' });
+  }
+
+  // Check if the requesting user is an admin of the group
+  const requesterMembership = db.prepare(`
+    SELECT role FROM group_members
+    WHERE group_id = ? AND user_id = ?
+  `).get(groupId, userId);
+
+  if (!requesterMembership || requesterMembership.role !== 'admin') {
+    return res.status(403).json({ error: 'permission denied: only admins can remove members' });
+  }
+
+  // Prevent removing the last admin
+  if (userIdToRemove === userId) {
+    const adminCount = db.prepare(`
+      SELECT COUNT(*) as count FROM group_members
+      WHERE group_id = ? AND role = 'admin'
+    `).get(groupId);
+
+    if (adminCount.count <= 1) {
+      return res.status(400).json({ error: 'cannot remove the last admin from the group' });
+    }
+  }
+
+  // Check if the user to remove is actually in the group
+  const membershipToRemove = db.prepare(`
+    SELECT role FROM group_members
+    WHERE group_id = ? AND user_id = ?
+  `).get(groupId, userIdToRemove);
+
+  if (!membershipToRemove) {
+    return res.status(404).json({ error: 'user is not a member of this group' });
+  }
+
+  try {
+    // Remove the user from the group
+    db.prepare(`
+      DELETE FROM group_members
+      WHERE group_id = ? AND user_id = ?
+    `).run(groupId, userIdToRemove);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Remove group member error:', err);
+    res.status(500).json({ error: 'Failed to remove member from group' });
+  }
+});
+
+// Get members of a group chat
+app.get('/api/groupchats/:groupId/members', requireAuth, (req, res) => {
+  const userId = req.currentUserId;
+  const groupId = parseInt(req.params.groupId, 10);
+
+  if (!userId) {
+    return res.status(401).json({ error: 'authentication required' });
+  }
+
+  if (!groupId || isNaN(groupId)) {
+    return res.status(400).json({ error: 'valid groupId required' });
+  }
+
+  // Check if user is a member of the group
+  const membership = db.prepare(`
+    SELECT id FROM group_members
+    WHERE group_id = ? AND user_id = ?
+  `).get(groupId, userId);
+
+  if (!membership) {
+    return res.status(403).json({ error: 'access denied: not a member of this group' });
+  }
+
+  const members = db.prepare(`
+    SELECT u.id, u.name, u.role, u.department, u.headline, u.avatar_url,
+           gm.role as group_role, gm.joined_at
+    FROM group_members gm
+    JOIN users u ON gm.user_id = u.id
+    WHERE gm.group_id = ?
+    ORDER BY gm.joined_at ASC
+  `).all(groupId);
+
+  res.json(members);
+});
+
+// Send a message to a group chat
+app.post('/api/groupchats/:groupId/messages', requireAuth, (req, res) => {
+  const userId = req.currentUserId;
+  const groupId = parseInt(req.params.groupId, 10);
+  const { text } = req.body;
+
+  if (!userId) {
+    return res.status(401).json({ error: 'authentication required' });
+  }
+
+  if (!groupId || isNaN(groupId)) {
+    return res.status(400).json({ error: 'valid groupId required' });
+  }
+
+  if (!text || typeof text !== 'string' || !text.trim() || text.trim().length > 4000) {
+    return res.status(400).json({ error: 'valid text (1-4000 characters) required' });
+  }
+
+  const trimmedText = text.trim();
+
+  // Check if user is a member of the group
+  const membership = db.prepare(`
+    SELECT id FROM group_members
+    WHERE group_id = ? AND user_id = ?
+  `).get(groupId, userId);
+
+  if (!membership) {
+    return res.status(403).json({ error: 'access denied: not a member of this group' });
+  }
+
+  
+  try {
+    // Insert the message
+    const result = db.prepare(`
+      INSERT INTO group_messages (group_id, sender_id, text)
+      VALUES (?, ?, ?)
+    `).run(groupId, userId, trimmedText);
+
+    const messageId = result.lastInsertRowid;
+
+    // Return the created message with sender info
+    const message = db.prepare(`
+      SELECT gm.id, gm.group_id, gm.sender_id, gm.text, gm.created_at,
+             u.name as sender_name
+      FROM group_messages gm
+      JOIN users u ON gm.sender_id = u.id
+      WHERE gm.id = ?
+    `).get(messageId);
+
+    res.status(201).json(message);
+  } catch (err) {
+    console.error('Send group message error:', err);
+    res.status(500).json({ error: 'Failed to send message to group' });
+  }
+});
+
+// Get messages from a group chat
+app.get('/api/groupchats/:groupId/messages', requireAuth, (req, res) => {
+  const userId = req.currentUserId;
+  const groupId = parseInt(req.params.groupId, 10);
+  const after = parseInt(req.query.after || '0', 10);
+
+  if (!userId) {
+    return res.status(401).json({ error: 'authentication required' });
+  }
+
+  if (!groupId || isNaN(groupId)) {
+    return res.status(400).json({ error: 'valid groupId required' });
+  }
+
+  if (isNaN(after) || after < 0) {
+    return res.status(400).json({ error: 'valid after parameter required (non-negative integer)' });
+  }
+
+  // Check if user is a member of the group
+  const membership = db.prepare(`
+    SELECT id FROM group_members
+    WHERE group_id = ? AND user_id = ?
+  `).get(groupId, userId);
+
+  if (!membership) {
+    return res.status(403).json({ error: 'access denied: not a member of this group' });
+  }
+
+  const messages = db.prepare(`
+    SELECT gm.id, gm.group_id, gm.sender_id, gm.text, gm.created_at,
+           u.name as sender_name
+    FROM group_messages gm
+    JOIN users u ON gm.sender_id = u.id
+    WHERE gm.group_id = ? AND gm.id > ?
+    ORDER BY gm.id ASC
+    LIMIT 100
+  `).all(groupId, after);
+
+  res.json(messages);
 });
 
 // --- Messages between the authenticated user and another user ---
@@ -482,7 +970,7 @@ function messagesHandler(req, res) {
     return res.status(400).json({ error: 'valid otherId and after are required' });
   }
   if (!userExists(userId) || !userExists(otherId)) return res.status(404).json({ error: 'user not found' });
-  const rows = db.prepare(`
+    const rows = db.prepare(`
     SELECT * FROM messages
     WHERE id > ?
     AND ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
@@ -499,7 +987,7 @@ app.post('/api/messages', requireAuth, (req, res) => {
   if (!senderId || !receiverId || !text || text.length > 4000) return res.status(400).json({ error: 'valid receiverId and text (4000 characters max) required' });
   if (senderId === receiverId) return res.status(400).json({ error: 'cannot message yourself' });
   if (!userExists(senderId) || !userExists(receiverId)) return res.status(404).json({ error: 'user not found' });
-  const result = db.prepare(
+    const result = db.prepare(
     'INSERT INTO messages (sender_id, receiver_id, text) VALUES (?, ?, ?)'
   ).run(senderId, receiverId, text);
   const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(result.lastInsertRowid);
@@ -510,8 +998,8 @@ app.post('/api/messages', requireAuth, (req, res) => {
 app.get('/api/notifications', requireAuth, (req, res) => {
   const userId = req.currentUserId;
   const unread = db.prepare(
-    'SELECT COUNT(*) AS c FROM messages WHERE receiver_id = ? AND read = 0'
-  ).get(userId).c;
+    'SELECT COUNT(*) AS c FROM messages m WHERE m.receiver_id = ? AND m.read = 0'
+  ).get(userId, userId).c;
   res.json({ unread });
 });
 
@@ -570,6 +1058,7 @@ app.post('/api/posts/:id/like', requireAuth, (req, res) => {
     res.json({ liked: true });
   }
 });
+
 
 // Friendly JSON errors for upload failures (wrong file type, too large, etc.)
 app.use((err, req, res, next) => {

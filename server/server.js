@@ -1020,6 +1020,38 @@ app.post("/api/tutorial/seen", requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// --- Reporting and Blocking ---
+
+app.post('/api/report', requireAuth, async (req, res) => {
+  const reporterId = req.currentUserId;
+  const { reportedId, reason, details } = req.body;
+
+  // Validate input
+  if (!reportedId || !reason) {
+    return res.status(400).json({ error: 'reportedId and reason are required' });
+  }
+
+  if (!userExists(reporterId) || !userExists(reportedId)) {
+    return res.status(404).json({ error: 'user not found' });
+  }
+
+  if (reporterId === reportedId) {
+    return res.status(400).json({ error: 'cannot report yourself' });
+  }
+
+  try {
+    db.prepare(`
+      INSERT INTO reports (reporter_id, reported_id, reason, details)
+      VALUES (?, ?, ?, ?)
+    `).run(reporterId, reportedId, reason, details || null);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Report error:', err);
+    res.status(500).json({ error: 'Failed to submit report' });
+  }
+});
+
 // --- Posts / tips feed ---
 app.get('/api/posts', (req, res) => {
   const rows = db.prepare(`

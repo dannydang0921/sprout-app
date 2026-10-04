@@ -467,9 +467,6 @@ app.get('/api/matches', requireAuth, (req, res) => {
   const { department, role, academicYear } = req.query;
 
   // Validate filter values using same pattern as profile updates
-  const LEGACY_DEPARTMENTS = ['Calculus II & III', 'Intro Physics', 'CS', 'Junior, Biology'];
-  const DEPARTMENTS = ['Computer Science', 'Biology', 'Economics', 'Mathematics', 'Physics', 'Undeclared', 'Other'];
-  const ACADEMIC_YEARS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'Faculty', 'Other'];
 
   function validChoice(value, choices) {
     return typeof value === 'string' && choices.includes(value);
@@ -662,13 +659,13 @@ app.post('/api/groupchats', requireAuth, (req, res) => {
 // Get details of a specific group chat
 app.get('/api/groupchats/:groupId', requireAuth, (req, res) => {
   const userId = req.currentUserId;
-  const groupId = parseInt(req.params.groupId, 10);
+  const groupId = parseId(req.params.groupId);
 
   if (!userId) {
     return res.status(401).json({ error: 'authentication required' });
   }
 
-  if (!groupId || isNaN(groupId)) {
+  if (!groupId) {
     return res.status(400).json({ error: 'valid groupId required' });
   }
 
@@ -703,18 +700,18 @@ app.get('/api/groupchats/:groupId', requireAuth, (req, res) => {
 // Add a member to a group chat
 app.post('/api/groupchats/:groupId/members', requireAuth, (req, res) => {
   const userId = req.currentUserId; // The user making the request (must be admin)
-  const groupId = parseInt(req.params.groupId, 10);
-  const { userIdToAdd } = req.body;
+  const groupId = parseId(req.params.groupId);
+  const userIdToAdd = parseId(req.body.userIdToAdd);
 
   if (!userId) {
     return res.status(401).json({ error: 'authentication required' });
   }
 
-  if (!groupId || isNaN(groupId)) {
+  if (!groupId) {
     return res.status(400).json({ error: 'valid groupId required' });
   }
 
-  if (!userIdToAdd || isNaN(userIdToAdd)) {
+  if (!userIdToAdd) {
     return res.status(400).json({ error: 'valid userIdToAdd required' });
   }
 
@@ -765,19 +762,19 @@ app.post('/api/groupchats/:groupId/members', requireAuth, (req, res) => {
 // Remove a member from a group chat
 app.delete('/api/groupchats/:groupId/members/:userIdToRemove', requireAuth, (req, res) => {
   const userId = req.currentUserId; // The user making the request (must be admin)
-  const groupId = parseInt(req.params.groupId, 10);
-  const userIdToRemove = parseInt(req.params.userIdToRemove, 10);
+  const groupId = parseId(req.params.groupId);
+  const userIdToRemove = parseId(req.params.userIdToRemove);
 
   if (!userId) {
-    return res.status(401).json({ error: 'authentication required' );
+    return res.status(401).json({ error: 'authentication required' });
   }
 
-  if (!groupId || isNaN(groupId)) {
-    return res.status(400).json({ error: 'valid groupId required' );
+  if (!groupId) {
+    return res.status(400).json({ error: 'valid groupId required' });
   }
 
-  if (!userIdToRemove || isNaN(userIdToRemove)) {
-    return res.status(400).json({ error: 'valid userIdToRemove required' );
+  if (!userIdToRemove) {
+    return res.status(400).json({ error: 'valid userIdToRemove required' });
   }
 
   // Check if the requesting user is an admin of the group
@@ -809,7 +806,7 @@ app.delete('/api/groupchats/:groupId/members/:userIdToRemove', requireAuth, (req
   `).get(groupId, userIdToRemove);
 
   if (!membershipToRemove) {
-    return res.status(404).json({ error: 'user is not a member of this group' );
+    return res.status(404).json({ error: 'user is not a member of this group' });
   }
 
   try {
@@ -822,21 +819,21 @@ app.delete('/api/groupchats/:groupId/members/:userIdToRemove', requireAuth, (req
     res.json({ success: true });
   } catch (err) {
     console.error('Remove group member error:', err);
-    res.status(500).json({ error: 'Failed to remove member from group' );
+    res.status(500).json({ error: 'Failed to remove member from group' });
   }
 });
 
 // Get members of a group chat
 app.get('/api/groupchats/:groupId/members', requireAuth, (req, res) => {
   const userId = req.currentUserId;
-  const groupId = parseInt(req.params.groupId, 10);
+  const groupId = parseId(req.params.groupId);
 
   if (!userId) {
-    return res.status(401).json({ error: 'authentication required' );
+    return res.status(401).json({ error: 'authentication required' });
   }
 
-  if (!groupId || isNaN(groupId)) {
-    return res.status(400).json({ error: 'valid groupId required' );
+  if (!groupId) {
+    return res.status(400).json({ error: 'valid groupId required' });
   }
 
   // Check if user is a member of the group
@@ -846,7 +843,7 @@ app.get('/api/groupchats/:groupId/members', requireAuth, (req, res) => {
   `).get(groupId, userId);
 
   if (!membership) {
-    return res.status(403).json({ error: 'access denied: not a member of this group' );
+    return res.status(403).json({ error: 'access denied: not a member of this group' });
   }
 
   const members = db.prepare(`
@@ -864,19 +861,19 @@ app.get('/api/groupchats/:groupId/members', requireAuth, (req, res) => {
 // Send a message to a group chat
 app.post('/api/groupchats/:groupId/messages', requireAuth, (req, res) => {
   const userId = req.currentUserId;
-  const groupId = parseInt(req.params.groupId, 10);
+  const groupId = parseId(req.params.groupId);
   const { text } = req.body;
 
   if (!userId) {
-    return res.status(401).json({ error: 'authentication required' );
+    return res.status(401).json({ error: 'authentication required' });
   }
 
-  if (!groupId || isNaN(groupId)) {
-    return res.status(400).json({ error: 'valid groupId required' );
+  if (!groupId) {
+    return res.status(400).json({ error: 'valid groupId required' });
   }
 
   if (!text || typeof text !== 'string' || !text.trim() || text.trim().length > 4000) {
-    return res.status(400).json({ error: 'valid text (1-4000 characters) required' );
+    return res.status(400).json({ error: 'valid text (1-4000 characters) required' });
   }
 
   const trimmedText = text.trim();
@@ -888,7 +885,7 @@ app.post('/api/groupchats/:groupId/messages', requireAuth, (req, res) => {
   `).get(groupId, userId);
 
   if (!membership) {
-    return res.status(403).json({ error: 'access denied: not a member of this group' );
+    return res.status(403).json({ error: 'access denied: not a member of this group' });
   }
 
 
@@ -913,26 +910,26 @@ app.post('/api/groupchats/:groupId/messages', requireAuth, (req, res) => {
     res.status(201).json(message);
   } catch (err) {
     console.error('Send group message error:', err);
-    res.status(500).json({ error: 'Failed to send message to group' );
+    res.status(500).json({ error: 'Failed to send message to group' });
   }
 });
 
 // Get messages from a group chat
 app.get('/api/groupchats/:groupId/messages', requireAuth, (req, res) => {
   const userId = req.currentUserId;
-  const groupId = parseInt(req.params.groupId, 10);
+  const groupId = parseId(req.params.groupId);
   const after = parseInt(req.query.after || '0', 10);
 
   if (!userId) {
-    return res.status(401).json({ error: 'authentication required' );
+    return res.status(401).json({ error: 'authentication required' });
   }
 
-  if (!groupId || isNaN(groupId)) {
-    return res.status(400).json({ error: 'valid groupId required' );
+  if (!groupId) {
+    return res.status(400).json({ error: 'valid groupId required' });
   }
 
   if (isNaN(after) || after < 0) {
-    return res.status(400).json({ error: 'valid after parameter required (non-negative integer)' );
+    return res.status(400).json({ error: 'valid after parameter required (non-negative integer)' });
   }
 
   // Check if user is a member of the group
@@ -942,7 +939,7 @@ app.get('/api/groupchats/:groupId/messages', requireAuth, (req, res) => {
   `).get(groupId, userId);
 
   if (!membership) {
-    return res.status(403).json({ error: 'access denied: not a member of this group' );
+    return res.status(403).json({ error: 'access denied: not a member of this group' });
   }
 
   const messages = db.prepare(`
@@ -1124,7 +1121,7 @@ app.delete('/api/unblock/:userId', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('Unblock error:', err);
     res.status(500).json({ error: 'Failed to unblock user' });
-  });
+  }
 });
 
 // --- Posts / tips feed ---

@@ -626,14 +626,21 @@ function renderTutorialStep(){
   overlay.className = 'overlay';
   overlay.innerHTML = `
     <div class="matchcard">
-      <div class="stamp">${tutorialStep + 1} / ${tutorialSteps.length}</div>
-      <h3 style="margin:8px 0;">${escapeHtml(step.title)}</h3>
-      <p>${escapeHtml(step.body)}</p>
-      <div class="btnrow">
-        ${isLast
-          ? `<button class="primary" onclick="finishTutorial()">Got it</button>`
-          : `<button class="primary" onclick="nextTutorialStep()">Next</button>`}
-        <button class="ghost" onclick="finishTutorial()">Skip</button>
+      <div class="tutorial-header">
+        <div class="tutorial-icon">🌱</div>
+        <div class="tutorial-progress">
+          <div class="stamp">${tutorialStep + 1} / ${tutorialSteps.length}</div>
+        </div>
+      </div>
+      <h3 class="tutorial-title">${escapeHtml(step.title)}</h3>
+      <p class="tutorial-body">${escapeHtml(step.body)}</p>
+      <div class="tutorial-footer">
+        <div class="btnrow">
+          ${isLast
+            ? `<button class="primary" onclick="finishTutorial()">Got it</button>`
+            : `<button class="primary" onclick="nextTutorialStep()">Next</button>`}
+          <button class="ghost" onclick="finishTutorial()">Skip</button>
+        </div>
       </div>
     </div>`;
   document.body.appendChild(overlay);

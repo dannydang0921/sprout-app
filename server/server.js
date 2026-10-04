@@ -494,7 +494,7 @@ app.get('/api/matches', requireAuth, (req, res) => {
     FROM matches m
     JOIN users u ON (u.id = m.user_a OR u.id = m.user_b)
     WHERE (m.user_a = ? AND u.id = m.user_b) OR (m.user_b = ? AND u.id = m.user_a)
-`;
+  `;
 
   // Add filters
   if (department) {
@@ -535,9 +535,6 @@ app.get('/api/search', requireAuth, (req, res) => {
   }
 
   // Validate filter values using same pattern as profile updates
-  const LEGACY_DEPARTMENTS = ['Calculus II & III', 'Intro Physics', 'CS', 'Junior, Biology'];
-  const DEPARTMENTS = ['Computer Science', 'Biology', 'Economics', 'Mathematics', 'Physics', 'Undeclared', 'Other'];
-  const ACADEMIC_YEARS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'Faculty', 'Other'];
 
   function validChoice(value, choices) {
     return typeof value === 'string' && choices.includes(value);
@@ -584,7 +581,7 @@ app.get('/api/search', requireAuth, (req, res) => {
     params.push(academicYear);
   }
 
-  
+
   // Exclude users already swiped on (to mirror discover behavior)
   query += `
     AND id NOT IN (SELECT target_id FROM swipes WHERE swiper_id = ?)`;
@@ -750,7 +747,7 @@ app.post('/api/groupchats/:groupId/members', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'user is already a member of this group' });
   }
 
-  
+
   try {
     // Add the user to the group
     db.prepare(`
@@ -772,15 +769,15 @@ app.delete('/api/groupchats/:groupId/members/:userIdToRemove', requireAuth, (req
   const userIdToRemove = parseInt(req.params.userIdToRemove, 10);
 
   if (!userId) {
-    return res.status(401).json({ error: 'authentication required' });
+    return res.status(401).json({ error: 'authentication required' );
   }
 
   if (!groupId || isNaN(groupId)) {
-    return res.status(400).json({ error: 'valid groupId required' });
+    return res.status(400).json({ error: 'valid groupId required' );
   }
 
   if (!userIdToRemove || isNaN(userIdToRemove)) {
-    return res.status(400).json({ error: 'valid userIdToRemove required' });
+    return res.status(400).json({ error: 'valid userIdToRemove required' );
   }
 
   // Check if the requesting user is an admin of the group
@@ -812,7 +809,7 @@ app.delete('/api/groupchats/:groupId/members/:userIdToRemove', requireAuth, (req
   `).get(groupId, userIdToRemove);
 
   if (!membershipToRemove) {
-    return res.status(404).json({ error: 'user is not a member of this group' });
+    return res.status(404).json({ error: 'user is not a member of this group' );
   }
 
   try {
@@ -825,7 +822,7 @@ app.delete('/api/groupchats/:groupId/members/:userIdToRemove', requireAuth, (req
     res.json({ success: true });
   } catch (err) {
     console.error('Remove group member error:', err);
-    res.status(500).json({ error: 'Failed to remove member from group' });
+    res.status(500).json({ error: 'Failed to remove member from group' );
   }
 });
 
@@ -835,11 +832,11 @@ app.get('/api/groupchats/:groupId/members', requireAuth, (req, res) => {
   const groupId = parseInt(req.params.groupId, 10);
 
   if (!userId) {
-    return res.status(401).json({ error: 'authentication required' });
+    return res.status(401).json({ error: 'authentication required' );
   }
 
   if (!groupId || isNaN(groupId)) {
-    return res.status(400).json({ error: 'valid groupId required' });
+    return res.status(400).json({ error: 'valid groupId required' );
   }
 
   // Check if user is a member of the group
@@ -849,7 +846,7 @@ app.get('/api/groupchats/:groupId/members', requireAuth, (req, res) => {
   `).get(groupId, userId);
 
   if (!membership) {
-    return res.status(403).json({ error: 'access denied: not a member of this group' });
+    return res.status(403).json({ error: 'access denied: not a member of this group' );
   }
 
   const members = db.prepare(`
@@ -871,15 +868,15 @@ app.post('/api/groupchats/:groupId/messages', requireAuth, (req, res) => {
   const { text } = req.body;
 
   if (!userId) {
-    return res.status(401).json({ error: 'authentication required' });
+    return res.status(401).json({ error: 'authentication required' );
   }
 
   if (!groupId || isNaN(groupId)) {
-    return res.status(400).json({ error: 'valid groupId required' });
+    return res.status(400).json({ error: 'valid groupId required' );
   }
 
   if (!text || typeof text !== 'string' || !text.trim() || text.trim().length > 4000) {
-    return res.status(400).json({ error: 'valid text (1-4000 characters) required' });
+    return res.status(400).json({ error: 'valid text (1-4000 characters) required' );
   }
 
   const trimmedText = text.trim();
@@ -891,10 +888,10 @@ app.post('/api/groupchats/:groupId/messages', requireAuth, (req, res) => {
   `).get(groupId, userId);
 
   if (!membership) {
-    return res.status(403).json({ error: 'access denied: not a member of this group' });
+    return res.status(403).json({ error: 'access denied: not a member of this group' );
   }
 
-  
+
   try {
     // Insert the message
     const result = db.prepare(`
@@ -908,15 +905,15 @@ app.post('/api/groupchats/:groupId/messages', requireAuth, (req, res) => {
     const message = db.prepare(`
       SELECT gm.id, gm.group_id, gm.sender_id, gm.text, gm.created_at,
              u.name as sender_name
-      FROM group_messages gm
-      JOIN users u ON gm.sender_id = u.id
-      WHERE gm.id = ?
+    FROM group_messages gm
+    JOIN users u ON gm.sender_id = u.id
+    WHERE gm.id = ?
     `).get(messageId);
 
     res.status(201).json(message);
   } catch (err) {
     console.error('Send group message error:', err);
-    res.status(500).json({ error: 'Failed to send message to group' });
+    res.status(500).json({ error: 'Failed to send message to group' );
   }
 });
 
@@ -927,15 +924,15 @@ app.get('/api/groupchats/:groupId/messages', requireAuth, (req, res) => {
   const after = parseInt(req.query.after || '0', 10);
 
   if (!userId) {
-    return res.status(401).json({ error: 'authentication required' });
+    return res.status(401).json({ error: 'authentication required' );
   }
 
   if (!groupId || isNaN(groupId)) {
-    return res.status(400).json({ error: 'valid groupId required' });
+    return res.status(400).json({ error: 'valid groupId required' );
   }
 
   if (isNaN(after) || after < 0) {
-    return res.status(400).json({ error: 'valid after parameter required (non-negative integer)' });
+    return res.status(400).json({ error: 'valid after parameter required (non-negative integer)' );
   }
 
   // Check if user is a member of the group
@@ -945,7 +942,7 @@ app.get('/api/groupchats/:groupId/messages', requireAuth, (req, res) => {
   `).get(groupId, userId);
 
   if (!membership) {
-    return res.status(403).json({ error: 'access denied: not a member of this group' });
+    return res.status(403).json({ error: 'access denied: not a member of this group' );
   }
 
   const messages = db.prepare(`
@@ -969,14 +966,16 @@ function messagesHandler(req, res) {
   if (!userId || !otherId || !Number.isInteger(after) || after < 0) {
     return res.status(400).json({ error: 'valid otherId and after are required' });
   }
-  if (!userExists(userId) || !userExists(otherId)) return res.status(404).json({ error: 'user not found' });
+  if (!userExists(userId) || !userExists(otherId)) {
+    return res.status(404).json({ error: 'user not found' });
+  }
     const rows = db.prepare(`
     SELECT * FROM messages
     WHERE id > ?
     AND ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
     ORDER BY id ASC
   `).all(after, userId, otherId, otherId, userId);
-  res.json(rows);
+  return res.json(rows);
 }
 app.get('/api/messages/:otherId', requireAuth, messagesHandler);
 
@@ -984,9 +983,15 @@ app.post('/api/messages', requireAuth, (req, res) => {
   const senderId = req.currentUserId;
   const receiverId = parseId(req.body.receiverId);
   const text = typeof req.body.text === 'string' ? req.body.text.trim() : '';
-  if (!senderId || !receiverId || !text || text.length > 4000) return res.status(400).json({ error: 'valid receiverId and text (4000 characters max) required' });
-  if (senderId === receiverId) return res.status(400).json({ error: 'cannot message yourself' });
-  if (!userExists(senderId) || !userExists(receiverId)) return res.status(404).json({ error: 'user not found' });
+  if (!senderId || !receiverId || !text || text.length > 4000) {
+    return res.status(400).json({ error: 'valid receiverId and text (4000 characters max) required' });
+  }
+  if (senderId === receiverId) {
+    return res.status(400).json({ error: 'cannot message yourself' });
+  }
+  if (!userExists(senderId) || !userExists(receiverId)) {
+    return res.status(404).json({ error: 'user not found' });
+  }
     const result = db.prepare(
     'INSERT INTO messages (sender_id, receiver_id, text) VALUES (?, ?, ?)'
   ).run(senderId, receiverId, text);
@@ -1006,8 +1011,12 @@ app.get('/api/notifications', requireAuth, (req, res) => {
 app.post('/api/messages/read', requireAuth, (req, res) => {
   const userId = req.currentUserId;
   const otherId = parseId(req.body.otherId);
-  if (!userId || !otherId) return res.status(400).json({ error: 'valid otherId required' });
-  if (!userExists(userId) || !userExists(otherId)) return res.status(404).json({ error: 'user not found' });
+  if (!userId || !otherId) {
+    return res.status(400).json({ error: 'valid otherId required' });
+  }
+  if (!userExists(userId) || !userExists(otherId)) {
+    return res.status(404).json({ error: 'user not found' });
+  }
   db.prepare(
     'UPDATE messages SET read = 1 WHERE receiver_id = ? AND sender_id = ?'
   ).run(userId, otherId);
@@ -1052,6 +1061,72 @@ app.post('/api/report', requireAuth, async (req, res) => {
   }
 });
 
+// Block a user
+app.post('/api/block', requireAuth, async (req, res) => {
+  const blockerId = req.currentUserId;
+  const { blockedId } = req.body;
+
+  // Validate input
+  if (!blockedId) {
+    return res.status(400).json({ error: 'blockedId is required' });
+  }
+
+  if (!userExists(blockerId) || !userExists(blockedId)) {
+    return res.status(404).json({ error: 'user not found' });
+  }
+
+  if (blockerId === blockedId) {
+    return res.status(400).json({ error: 'cannot block yourself' });
+  }
+
+  try {
+    db.prepare(`
+      INSERT OR IGNORE INTO blocks (blocker_id, blocked_id)
+      VALUES (?, ?)
+    `).run(blockerId, blockedId);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Block error:', err);
+    res.status(500).json({ error: 'Failed to block user' });
+  }
+});
+
+// Unblock a user
+app.delete('/api/unblock/:userId', requireAuth, async (req, res) => {
+  const blockerId = req.currentUserId;
+  const blockedId = parseId(req.params.userId);
+
+  // Validate input
+  if (!blockedId) {
+    return res.status(400).json({ error: 'valid userId is required' });
+  }
+
+  if (!userExists(blockerId) || !userExists(blockedId)) {
+    return res.status(404).json({ error: 'user not found' });
+  }
+
+  if (blockerId === blockedId) {
+    return res.status(400).json({ error: 'cannot unblock yourself' });
+  }
+
+  try {
+    const result = db.prepare(`
+      DELETE FROM blocks
+      WHERE blocker_id = ? AND blocked_id = ?
+    `).run(blockerId, blockedId);
+
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'block not found' });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Unblock error:', err);
+    res.status(500).json({ error: 'Failed to unblock user' });
+  });
+});
+
 // --- Posts / tips feed ---
 app.get('/api/posts', (req, res) => {
   const rows = db.prepare(`
@@ -1067,8 +1142,12 @@ app.get('/api/posts', (req, res) => {
 app.post('/api/posts', requireAuth, (req, res) => {
   const authorId = req.currentUserId;
   const text = typeof req.body.text === 'string' ? req.body.text.trim() : '';
-  if (!authorId || !text || text.length > 4000) return res.status(400).json({ error: 'valid post text (4000 characters max) required' });
-  if (!userExists(authorId)) return res.status(404).json({ error: 'user not found' });
+  if (!authorId || !text || text.length > 4000) {
+    return res.status(400).json({ error: 'valid post text (4000 characters max) required' });
+  }
+  if (!userExists(authorId)) {
+    return res.status(404).json({ error: 'user not found' });
+  }
   const result = db.prepare('INSERT INTO posts (author_id, text) VALUES (?, ?)').run(authorId, text);
   res.json({ id: result.lastInsertRowid });
 });
@@ -1076,10 +1155,11 @@ app.post('/api/posts', requireAuth, (req, res) => {
 app.post('/api/posts/:id/like', requireAuth, (req, res) => {
   const postId = parseId(req.params.id);
   const userId = req.currentUserId;
-  if (!postId || !userId) return res.status(400).json({ error: 'valid post id required' });
-  if (!userExists(userId)) return res.status(404).json({ error: 'user not found' });
-  if (!db.prepare('SELECT 1 FROM posts WHERE id = ?').get(postId)) {
-    return res.status(404).json({ error: 'post not found' });
+  if (!postId || !userId) {
+    return res.status(400).json({ error: 'valid post id required' });
+  }
+  if (!userExists(userId)) {
+    return res.status(404).json({ error: 'user not found' });
   }
   const existing = db.prepare('SELECT 1 FROM post_likes WHERE post_id = ? AND user_id = ?').get(postId, userId);
   if (existing) {
@@ -1090,6 +1170,7 @@ app.post('/api/posts/:id/like', requireAuth, (req, res) => {
     res.json({ liked: true });
   }
 });
+
 
 
 // Friendly JSON errors for upload failures (wrong file type, too large, etc.)

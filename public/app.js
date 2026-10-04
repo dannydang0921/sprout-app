@@ -20,9 +20,41 @@ let currentUserId = null;
 let discoverQueue = [];
 
 const tutorialSteps = [
-  { title: "Welcome to Sprout", body: "Swipe through professors, tutors, and peers who match your interests. Let's take a quick look around." },
-  { title: "Make a connection", body: "Tap ♥ to connect with someone, or ✕ to pass. If they've connected with you too, it's a match." },
-  { title: "Everything else lives down here", body: "Matches, Messages, the campus tips Feed, and your Profile are all one tap away." }
+  {
+    title: "Welcome to Sprout",
+    body: "Let's start by exploring the Discover tab where you can swipe through potential connections.",
+    action: "navigate_to_tab",
+    target: '[data-tab="discover"]',
+    instruction: "Tap the Discover tab at the bottom"
+  },
+  {
+    title: "Swipe to Connect",
+    body: "Swipe right (♥) to connect with someone you like, or left (✕) to pass.",
+    action: "swipe_right",
+    target: ".swipe-actions button.connect",
+    instruction: "Tap the connect button (♥) to swipe right"
+  },
+  {
+    title: "Check Your Matches",
+    body: "When you get a match, you can start chatting. Let's check the Matches tab.",
+    action: "navigate_to_tab",
+    target: '[data-tab="matches"]',
+    instruction: "Tap the Matches tab at the bottom"
+  },
+  {
+    title: "Send a Message",
+    body: "Start a conversation by sending a message to your match.",
+    action: "send_message",
+    target: "#msginput",
+    instruction: "Tap the message input and type a message"
+  },
+  {
+    title: "Share in the Feed",
+    body: "Share tips, resources, or questions with the community in the Feed tab.",
+    action: "navigate_to_tab",
+    target: '[data-tab="feed"]',
+    instruction: "Tap the Feed tab at the bottom"
+  }
 ];
 let matches = [];
 let activeTab = 'discover';
@@ -119,7 +151,7 @@ async function loadForCurrentUser(){
   await refreshUnread();
   render();
   if (!currentUser.has_seen_tutorial) {
-    showTutorial();
+    await showTutorial();
   }
 }
 
@@ -373,9 +405,9 @@ function closeOverlay(){ document.querySelector('.overlay')?.remove(); render();
 
 let tutorialStep = 0;
 
-function showTutorial(){
+async function showTutorial(){
   tutorialStep = 0;
-  renderTutorialStep();
+  await renderTutorialStep();
 }
 
 function renderTutorialStep(){
@@ -412,6 +444,220 @@ async function finishTutorial(){
   } catch (err) {
     console.error('Failed to save tutorial status:', err);
   }
+}
+
+async function asyncShowTutorial(){
+  await showTutorial();
+}
+
+// Tutorial Enhancement Functions
+function createHighlight(element, options = {}){
+  // Remove any existing highlights
+  removeHighlights();
+
+  const rect = element.getBoundingClientRect();
+  const highlight = document.createElement('div');
+  highlight.className = 'tutorial-highlight';
+  highlight.style.top = `${rect.top + window.scrollY - 2}px`;
+  highlight.style.left = `${rect.left + window.scrollX - 2}px`;
+  highlight.style.width = `${rect.width + 4}px`;
+  highlight.style.height = `${rect.height + 4}px`;
+
+  // Add offset if specified
+  if (options.offset) {
+    highlight.style.top = `${parseInt(highlight.style.top) + options.offset.y}px`;
+    highlight.style.left = `${parseInt(highlight.style.left) + options.offset.x}px`;
+  }
+
+  document.body.appendChild(highlight);
+
+  // Add arrow if specified
+  if (options.arrow) {
+    const arrow = document.createElement('div');
+    arrow.className = `tutorial-arrow tutorial-arrow.${options.arrow}`;
+
+    // Position arrow based on direction
+    let arrowTop, arrowLeft;
+    switch(options.arrow) {
+      case 'up':
+        arrowTop = `${rect.top + window.scrollY - 20}px`;
+        arrowLeft = `${rect.left + window.scrollX + rect.width/2 - 10}px`;
+        break;
+      case 'down':
+        arrowTop = `${rect.top + window.scrollY + rect.height + 5}px`;
+        arrowLeft = `${rect.left + window.scrollX + rect.width/2 - 10}px`;
+        break;
+      case 'left':
+        arrowTop = `${rect.top + window.scrollY + rect.height/2 - 10}px`;
+        arrowLeft = `${rect.left + window.scrollX - 20}px`;
+        break;
+      case 'right':
+        arrowTop = `${rect.top + window.scrollY + rect.height/2 - 10}px`;
+        arrowLeft = `${rect.left + window.scrollX + rect.width + 5}px`;
+        break;
+    }
+
+    arrow.style.top = arrowTop;
+    arrow.style.left = arrowLeft;
+    document.body.appendChild(arrow);
+  }
+
+  // Add tooltip if specified
+  if (options.tooltip) {
+    const tooltip = document.createElement('div');
+    tooltip.id = 'tutorial-tooltip';
+    tooltip.textContent = options.tooltip;
+
+    // Position tooltip above the element with some offset
+    const tooltipTop = `${rect.top + window.scrollY - 40}px`;
+    const tooltipLeft = `${rect.left + window.scrollX + rect.width/2 - 75}px`; // Assuming ~150px width
+
+    tooltip.style.top = tooltipTop;
+    tooltip.style.left = tooltipLeft;
+
+    // Add tooltip arrow
+    tooltip.innerHTML += '<style>#tutorial-tooltip::after{border-color:rgba(0,0,0,0.8) transparent transparent transparent;bottom:-12px;left:50%;margin-left:-6px;}</style>';
+
+    document.body.appendChild(tooltip);
+  }
+}
+
+function removeHighlights(){
+  document.querySelectorAll('.tutorial-highlight, .tutorial-arrow, #tutorial-tooltip').forEach(el => el.remove());
+}
+
+function waitForInteraction(step, resolve){
+  const { action, target } = step;
+  let listener;
+
+  const handleInteraction = (event) => {
+    removeHighlights();
+    if (listener) {
+      if (action === 'navigate_to_tab' || action === 'swipe_right' || action === 'send_message') {
+        document.removeEventListener('click', listener);
+      } else if (action === 'input_text') {
+        document.removeEventListener('input', listener);
+      }
+    }
+    resolve();
+  };
+
+  // Set up appropriate event listener based on action
+  switch(action) {
+    case 'navigate_to_tab':
+    case 'swipe_right':
+    case 'send_message':
+      listener = (e) => {
+        const targetElement = document.querySelector(target);
+        if (targetElement && (targetElement.contains(e.target) || targetElement === e.target)) {
+          handleInteraction(e);
+        }
+      };
+      document.addEventListener('click', listener);
+      break;
+
+    case 'input_text':
+      listener = (e) => {
+        const targetElement = document.querySelector(target);
+        if (targetElement && (targetElement.contains(e.target) || targetElement === e.target)) {
+          if (e.target.value && e.target.value.trim().length > 0) {
+            handleInteraction(e);
+          }
+        }
+      };
+      document.addEventListener('input', listener);
+      break;
+
+    default:
+      // Default to click for unknown actions
+      listener = (e) => {
+        const targetElement = document.querySelector(target);
+        if (targetElement && (targetElement.contains(e.target) || targetElement === e.target)) {
+          handleInteraction(e);
+        }
+      };
+      document.addEventListener('click', listener);
+  }
+
+  // Create visual highlight for the target element
+  const targetElement = document.querySelector(target);
+  if (targetElement) {
+    let options = {};
+
+    // Configure highlight options based on step
+    switch(step.title) {
+      case "Welcome to Sprout":
+        options.arrow = 'down';
+        options.tooltip = "This is where you'll discover potential connections";
+        break;
+      case "Swipe to Connect":
+        options.arrow = 'up';
+        options.tooltip = "Tap the heart to connect or the X to pass";
+        break;
+      case "Check Your Matches":
+        options.arrow = 'down';
+        options.tooltip = "See all your connections here";
+        break;
+      case "Send a Message":
+        options.arrow = 'down';
+        options.tooltip = "Type your message here";
+        break;
+      case "Share in the Feed":
+        options.arrow = 'down';
+        options.tooltip = "Share tips, resources, or questions with the community";
+        break;
+    }
+
+    createHighlight(targetElement, options);
+  }
+}
+
+// Update the tutorial rendering function to be interactive
+let tutorialInteractionPromise = null;
+let tutorialInteractionResolve = null;
+
+function renderTutorialStep(){
+  document.querySelector('.overlay')?.remove();
+  removeHighlights(); // Clean up any previous highlights
+
+  const step = tutorialSteps[tutorialStep];
+  const isLast = tutorialStep === tutorialSteps.length - 1;
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `
+    <div class="matchcard">
+      <div class="stamp">${tutorialStep + 1} / ${tutorialSteps.length}</div>
+      <h3 style="margin:8px 0;">${escapeHtml(step.title)}</h3>
+      <p>${escapeHtml(step.body)}</p>
+      <div class="btnrow">
+        ${isLast
+          ? `<button class="primary" onclick="finishTutorial()">Got it</button>`
+          : `<button class="primary" onclick="nextTutorialStep()">Next</button>`}
+        <button class="ghost" onclick="finishTutorial()">Skip</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  // If this step requires interaction, set up the listener
+  if (step.action && !isLast) {
+    return new Promise((resolve) => {
+      tutorialInteractionResolve = resolve;
+      waitForInteraction(step, resolve);
+    });
+  }
+
+  return Promise.resolve();
+}
+
+// Update nextTutorialStep to handle promises
+async function nextTutorialStep(){
+  if (tutorialInteractionPromise) {
+    await tutorialInteractionPromise;
+    tutorialInteractionPromise = null;
+    tutorialInteractionResolve = null;
+  }
+  tutorialStep++;
+  await renderTutorialStep();
 }
 function goToThread(id){
   document.querySelector('.overlay')?.remove();
@@ -586,7 +832,7 @@ async function loadProfile(){
       <button class="danger" onclick="deleteAccount()">Delete account</button>
     </div>
     <!-- TEMP: testing only, remove before beta -->
-    <div class="row2"><button onclick="showTutorial()">Replay tutorial (testing only)</button></div>
+    <div class="row2"><button onclick="asyncShowTutorial()">Replay tutorial (testing only)</button></div>
   `;
 
   document.getElementById('photoInput').addEventListener('change', async (e) => {
